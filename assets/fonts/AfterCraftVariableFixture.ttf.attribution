@@ -1,0 +1,8 @@
+asset: AfterCraftVariableFixture.ttf
+title: Synthetic variable-font rendering fixture
+author: AfterCraft contributors
+source: original work; tools/generate-test-font.py
+license: MIT OR Apache-2.0
+license-file: ../../LICENSE-MIT
+added: 2026-10-26 by AfterCraft contributors
+notes: Original geometric H with varying outline and advance. Test-only, generated with fonttools 4.67.0; no third-party font outlines.

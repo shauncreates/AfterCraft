@@ -1,0 +1,9 @@
+{
+  "package": "zune-inflate-0.2.54",
+  "licenseDeclaredInCargoManifest": "MIT OR Apache-2.0 OR Zlib",
+  "selectedLicense": "Apache-2.0",
+  "authors": [],
+  "repository": null,
+  "manifestSource": "https://crates.io/api/v1/crates/zune-inflate/0.2.54/download",
+  "notes": "The published Cargo package declares Apache-2.0 as an available license without shipping a separate license text. This supplies the unmodified standard Apache-2.0 text."
+}

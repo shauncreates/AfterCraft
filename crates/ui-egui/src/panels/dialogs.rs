@@ -236,6 +236,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
     let Some(d) = app.dialog else { return };
     let t = app.tokens;
     match d {
+        Dialog::NativePluginPreference => native_plugin_preference(app, ctx, &t),
         Dialog::About => about(app, ctx, &t),
         Dialog::NewComp | Dialog::CompSettings => comp_settings(app, ctx, &t, d == Dialog::CompSettings),
         Dialog::SolidSettings => solid(app, ctx, &t),
@@ -265,6 +266,34 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
     }
 }
 
+fn native_plugin_preference(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
+    let mut choice = None;
+    modal(ctx, "Plug-in Edition Preference", vec2(520.0, 250.0), t, |ui| {
+        ui.label(tr("Choose your preferred plug-in edition."));
+        ui.add_space(8.0);
+        ui.label(tr(
+            "Choose the edition to show in Effects & Presets and use when applying an effect by name. The other edition stays available in the Effect menu.",
+        ));
+        ui.label(tr("Existing projects keep their current edition. You can change this later in the Effect menu."));
+        ui.add_space(18.0);
+        ui.horizontal(|ui| {
+            for (edition, label) in [("adobe", "Prefer Adobe"), ("ofx", "Prefer OFX")] {
+                let response = ui.button(tr(label));
+                app.auto.add_response(&format!("plugin.edition.{edition}"), &response, label);
+                if response.clicked() {
+                    choice = Some(edition);
+                }
+            }
+        });
+    });
+    if let Some(edition) = choice {
+        match app.session.execute("effect.plugins.preference", json!({"edition":edition})) {
+            Ok(_) => app.dialog = None,
+            Err(error) => app.ui.status = error.to_string(),
+        }
+    }
+}
+
 /// About tabs: About · Contributors · Models.
 const ABOUT_TABS: [(&str, &str); 3] = [("About", "about"), ("Contributors", "contributors"), ("Models", "models")];
 /// Height of the Contributors / Models tab bodies (they scroll inside it).
@@ -274,7 +303,7 @@ fn about(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
     let mut close = false;
     let mut cmd: Option<&str> = None;
     let tab_id = egui::Id::new("about_tab");
-    modal(ctx, "About EffectCraft", vec2(680.0, 520.0), t, |ui| {
+    modal(ctx, "About AfterCraft", vec2(680.0, 520.0), t, |ui| {
         let mut tab = ui.data_mut(|d| d.get_temp::<usize>(tab_id)).unwrap_or(0);
         ui.horizontal(|ui| {
             for (i, (label, id)) in ABOUT_TABS.iter().enumerate() {
@@ -327,7 +356,7 @@ fn about_main(app: &mut EffectcraftApp, ui: &mut egui::Ui, t: &Tokens, cmd: &mut
     let p = ui.painter();
     p.rect_filled(r, 10.0, Color32::from_rgb(0x1b, 0x22, 0x3c));
     crate::header::paint_logo(p, Rect::from_min_size(r.min + vec2(18.0, 20.0), vec2(56.0, 56.0)));
-    p.text(r.min + vec2(90.0, 34.0), Align2::LEFT_CENTER, "EffectCraft", Tokens::semibold(24.0), Color32::WHITE);
+    p.text(r.min + vec2(90.0, 34.0), Align2::LEFT_CENTER, "AfterCraft", Tokens::semibold(24.0), Color32::WHITE);
     p.text(
         r.min + vec2(90.0, 62.0),
         Align2::LEFT_CENTER,
@@ -336,12 +365,12 @@ fn about_main(app: &mut EffectcraftApp, ui: &mut egui::Ui, t: &Tokens, cmd: &mut
         t.text_dim,
     );
     ui.add_space(12.0);
-    ui.label(tr("A clean-room, open-source compositor for motion graphics and visual effects: native on macOS, Windows and Linux, and in the browser. Part of the ArtCraft family of creative apps."));
+    ui.label(tr("A clean-room, open-source compositor for motion graphics and visual effects: native on macOS, Windows and Linux, and in the browser. An independent fork based on EffectCraft 0.16.0."));
     ui.add_space(14.0);
     let links: [(Icon, &str, &str, &'static str); 4] = [
-        (Icon::Chat, "Join the ArtCraft Discord", effectcraft_engine::links::DISCORD, "help.discord"),
-        (Icon::Globe, "ArtCraft website", effectcraft_engine::links::WEBSITE, "help.website"),
-        (Icon::Sparkle, "EffectCraft home page", effectcraft_engine::links::APP_PAGE, "help.appPage"),
+        (Icon::Chat, "AfterCraft community", effectcraft_engine::links::DISCORD, "help.discord"),
+        (Icon::Globe, "AfterCraft website", effectcraft_engine::links::WEBSITE, "help.website"),
+        (Icon::Sparkle, "AfterCraft home page", effectcraft_engine::links::APP_PAGE, "help.appPage"),
         (Icon::Code, "Source code on GitHub", effectcraft_engine::links::GITHUB, "help.github"),
     ];
     for (icon, label, url, c) in links {

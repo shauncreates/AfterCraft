@@ -30,6 +30,52 @@ pub use effectcraft_effects::plugin::{EffectPlugin, PLUGIN_API_VERSION, PluginFr
 #[cfg(feature = "wasm")]
 mod wasm;
 
+#[cfg(all(windows, feature = "native-aex"))]
+mod install;
+#[cfg(all(windows, feature = "native-aex"))]
+mod native_aex;
+#[cfg(all(windows, feature = "native-aex"))]
+mod ofx;
+#[cfg(all(windows, feature = "native-aex"))]
+mod package;
+
+#[cfg(all(windows, feature = "native-aex"))]
+fn select_worker(configured: std::path::PathBuf, app_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let bundled = app_dir.join(name);
+    if configured.file_name().is_some_and(|file| file.eq_ignore_ascii_case(name)) && bundled.is_file() { bundled } else { configured }
+}
+#[cfg(all(windows, feature = "native-aex"))]
+pub(crate) fn bundled_worker(configured: std::path::PathBuf, name: &str) -> std::path::PathBuf {
+    match std::env::current_exe().ok().and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)) {
+        Some(directory) => select_worker(configured, &directory, name),
+        None => configured,
+    }
+}
+
+#[cfg(all(test, windows, feature = "native-aex"))]
+#[test]
+fn managed_profiles_use_current_bundled_workers_and_preserve_custom_helpers() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundled = dir.path().join("effectcraft-aex-probe.exe");
+    std::fs::write(&bundled, b"original worker-selection fixture, never executed").unwrap();
+    assert_eq!(select_worker(std::path::PathBuf::from("C:/old-build/effectcraft-aex-probe.exe"), dir.path(), "effectcraft-aex-probe.exe"), bundled);
+    let custom = std::path::PathBuf::from("C:/custom/different-worker.exe");
+    assert_eq!(select_worker(custom.clone(), dir.path(), "effectcraft-aex-probe.exe"), custom);
+}
+
+/// Discover/register installed plugin files through a host-provided settings folder and worker.
+pub fn installer(request: &serde_json::Value, progress: &dyn Fn(u64, u64, &str) -> bool) -> Result<serde_json::Value, String> {
+    #[cfg(all(windows, feature = "native-aex"))]
+    {
+        install::install(request, progress)
+    }
+    #[cfg(not(all(windows, feature = "native-aex")))]
+    {
+        let _ = (request, progress);
+        Err("Native plug-in installation requires the Windows native-aex build".into())
+    }
+}
+
 /// Whether this build can load WebAssembly plug-ins.
 pub fn wasm_available() -> bool {
     cfg!(feature = "wasm")
@@ -52,7 +98,20 @@ pub fn load_wasm(bytes: &[u8], source: &str) -> Result<&'static EffectSpec, Stri
 
 /// [`load_wasm`] for the engine's plug-in loader hook: `{id, name, category, version, api}`.
 pub fn loader(bytes: &[u8], source: &str) -> Result<serde_json::Value, String> {
-    let spec = load_wasm(bytes, source)?;
+    let ofx = source.to_ascii_lowercase().ends_with(".ecofx.json");
+    let native = ofx || source.to_ascii_lowercase().ends_with(".ecaex.json");
+    let spec = if native {
+        #[cfg(all(windows, feature = "native-aex"))]
+        {
+            if ofx { self::ofx::load(bytes, source)? } else { native_aex::load(bytes, source)? }
+        }
+        #[cfg(not(all(windows, feature = "native-aex")))]
+        {
+            return Err("Experimental AEX hosting requires the Windows native-aex build".into());
+        }
+    } else {
+        load_wasm(bytes, source)?
+    };
     let m = effectcraft_effects::plugin::plugin(spec.id).map(|p| p.manifest().clone());
     Ok(serde_json::json!({
         "id": spec.id,
@@ -60,6 +119,8 @@ pub fn loader(bytes: &[u8], source: &str) -> Result<serde_json::Value, String> {
         "category": spec.category,
         "version": m.as_ref().map(|m| m.version.clone()).unwrap_or_default(),
         "api": PLUGIN_API_VERSION,
+        "experimentalNative": native,
+        "nativeGpuAcceleration": false,
         "params": spec.params.len(),
     }))
 }

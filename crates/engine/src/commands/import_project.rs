@@ -1,4 +1,4 @@
-//! File ▸ Import ▸ EffectCraft Project: merge another `.ecproj` (or its XML copy) into the
+//! File ▸ Import ▸ AfterCraft Project: merge another `.ecproj` (or its XML copy) into the
 //! current project, as After Effects imports an `.aep` into the open project. The imported
 //! items land in a folder named after the file; every id is shifted past the current project's
 //! so nothing collides, and the whole import is one undo step.
@@ -12,10 +12,15 @@ use crate::{EngineError, Result, Session, cmd};
 
 const C: &str = "file.importProject";
 
-/// Whether `path` names a project EffectCraft imports as a project (not as footage).
+/// Whether `path` names a project AfterCraft imports as a project (not as footage).
 pub(crate) fn is_project_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
-    lower.ends_with(".ecproj") || lower.ends_with(".ecprojx")
+    lower.ends_with(".ecproj") || lower.ends_with(".ecprojx") || is_aep_path(path)
+}
+
+pub(crate) fn is_aep_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".aep") || lower.ends_with(".aepx")
 }
 
 /// Read a project file (JSON or its XML copy), as File ▸ Open does.
@@ -23,7 +28,7 @@ fn read_project(s: &Session, path: &str) -> Result<(Project, Option<String>)> {
     let bytes = s.services.read_file(path).map_err(|e| EngineError::Other(format!("cannot read {path}: {e}")))?;
     let text = String::from_utf8(bytes).map_err(|_| bad(C, format!("{path} is not a text project file")))?;
     let text = if crate::xml_project::is_xml(&text) { crate::xml_project::from_xml(&text).map_err(EngineError::Other)? } else { text };
-    let project = Project::from_json(&text).map_err(|e| bad(C, format!("{path} is not a project EffectCraft can open: {e}")))?;
+    let project = Project::from_json(&text).map_err(|e| bad(C, format!("{path} is not a project AfterCraft can open: {e}")))?;
     Ok((project, effectcraft_project::saved_by(&text)))
 }
 
@@ -60,16 +65,22 @@ fn root_comps(project: &Project) -> Vec<ItemId> {
 
 fn import_project(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_p(p, "path").ok_or_else(|| bad(C, "missing `path` (.ecproj)"))?.to_string();
-    let (mut sub, saved_by) = read_project(s, &path)?;
+    let (sub, saved_by) = read_project(s, &path)?;
+    merge_project(s, &path, sub, saved_by.as_deref())
+}
+
+/// Merge a completely staged project in one undoable edit. The caller owns conversion and
+/// validation; no converter or import script can modify the live session before this point.
+fn merge_project(s: &mut Session, path: &str, mut sub: Project, saved_by: Option<&str>) -> Result<Value> {
     crate::upgrade_effects(&mut sub);
-    let file = std::path::Path::new(&path);
-    let missing = resolve_footage(s, &mut sub, &path);
-    s.stored_paths.add(&sub, Some(&path));
+    let file = std::path::Path::new(path);
+    let missing = resolve_footage(s, &mut sub, path);
     // The imported project's own render queue stays behind (as for templates).
     let base = s.project.next_id;
     if sub.next_id.checked_add(base).is_none() {
         return Err(bad(C, format!("{path} has ids out of range")));
     }
+    s.stored_paths.add(&sub, Some(path));
     essential::offset_ids(&mut sub, base);
     let roots: Vec<ItemId> = root_comps(&sub);
     let folder_name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Imported Project".into());
@@ -96,8 +107,8 @@ fn import_project(s: &mut Session, p: &Value) -> Result<Value> {
         .collect();
     let primary = if let [one] = roots.as_slice() { Some(one.0) } else { None };
     let mut warnings = vec![];
-    if let Some(v) = saved_by.as_deref().filter(|v| effectcraft_project::is_newer_version(v, effectcraft_project::APP_VERSION)) {
-        warnings.push(format!("saved by EffectCraft {v}, newer than this version ({})", effectcraft_project::APP_VERSION));
+    if let Some(v) = saved_by.filter(|v| effectcraft_project::is_newer_version(v, effectcraft_project::APP_VERSION)) {
+        warnings.push(format!("saved by AfterCraft {v}, newer than this version ({})", effectcraft_project::APP_VERSION));
     }
     if !missing.is_empty() {
         warnings.push(format!("{} footage file{} missing", missing.len(), if missing.len() == 1 { " is" } else { "s are" }));
@@ -114,14 +125,77 @@ fn import_project(s: &mut Session, p: &Value) -> Result<Value> {
     }))
 }
 
+fn has_aep(s: &Session) -> std::result::Result<(), String> {
+    if s.aep_importer.is_some() { Ok(()) } else { Err("After Effects project import is unavailable on this host".into()) }
+}
+
+fn import_aep(s: &mut Session, p: &Value) -> Result<Value> {
+    const COMMAND: &str = "file.importAep";
+    let path = str_p(p, "path").ok_or_else(|| bad(COMMAND, "missing `path` (.aep or .aepx)"))?;
+    if !is_aep_path(path) {
+        return Err(bad(COMMAND, "select an .aep or .aepx project"));
+    }
+    let importer = s.aep_importer.ok_or_else(|| bad(COMMAND, "After Effects project import is unavailable on this host"))?;
+    let mut options = p.as_object().cloned().ok_or_else(|| bad(COMMAND, "parameters must be an object"))?;
+    if !options.contains_key("edition") {
+        options.insert(
+            "edition".into(),
+            match s.native_plugin_edition {
+                Some(crate::NativePluginEdition::Adobe) => json!("adobe"),
+                Some(crate::NativePluginEdition::Ofx) => json!("ofx"),
+                None => Value::Null,
+            },
+        );
+    }
+    if options.get("edition").is_some_and(|edition| !edition.is_null() && !matches!(edition.as_str(), Some("adobe" | "ofx"))) {
+        return Err(bad(COMMAND, "edition must be adobe or ofx"));
+    }
+    let (sub, mut report) = importer(path, &Value::Object(options)).map_err(|e| bad(COMMAND, e))?;
+    let mut result = merge_project(s, path, sub, None)?;
+    let details =
+        report["runtime"]["output"].as_str().unwrap_or("The source and import details were retained in the report.").chars().take(6000).collect::<String>();
+    let artifact = report["artifactDirectory"].as_str().unwrap_or("");
+    let actual = &report["actualImported"];
+    let imported_counts = format!(
+        "Created {} compositions, {} layers, {} effects and {} keyframes ({} 3D layers).\n\n",
+        actual["comps"], actual["layers"], actual["effects"], actual["keyframes"], actual["threeDLayers"]
+    );
+    s.events.push(crate::Event::Frontend {
+        command: "file.importAep.report".into(),
+        params: json!({"body":format!("{imported_counts}{details}\n\nReview unsupported and approximated features before rendering. Full report: {artifact}/report.json")}),
+    });
+    // Preserve the complete source archive on disk, without copying its potentially
+    // multi-megabyte base64 payload into every CLI/MCP reply or UI event.
+    if let Some(object) = report.as_object_mut() {
+        object.remove("sourceSnapshot");
+    }
+    if let Some(document) = report.get_mut("sourceDocument").and_then(Value::as_object_mut) {
+        document.remove("contentBase64");
+    }
+    result["report"] = report;
+    s.toast("After Effects project imported. Review the import report for unsupported or approximated features.");
+    Ok(result)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "file.importProject",
-        "EffectCraft Project...",
-        ["File", "Import"],
-        None,
-        "{path (.ecproj or .ecprojx)} — merges the project into a folder named after the file; returns {folder, items, comps, rootComps, primaryComp (the only root comp, else null), missingMedia, warnings}",
-        always,
-        import_project
-    )]
+    vec![
+        cmd!(
+            "file.importProject",
+            "AfterCraft Project...",
+            ["File", "Import"],
+            None,
+            "{path (.ecproj or .ecprojx)} — merges the project into a folder named after the file; returns {folder, items, comps, rootComps, primaryComp (the only root comp, else null), missingMedia, warnings}",
+            always,
+            import_project
+        ),
+        cmd!(
+            "file.importAep",
+            "After Effects Project...",
+            ["File", "Import"],
+            None,
+            "{path (.aep or .aepx), edition?: adobe|ofx} — converts in a separate staging session, then merges in one undo step; returns the import report and retained source/report artifact paths",
+            has_aep,
+            import_aep
+        ),
+    ]
 }

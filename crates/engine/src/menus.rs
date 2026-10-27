@@ -14,7 +14,7 @@
 //!   @effects                                  the effect categories (Effect menu)
 //!   @dynamic:history                          entries computed from the session when the menu
 //!                                             opens ([`dynamic`]: recent files, undo history…)
-//! [mac] Quit EffectCraft | app.quit           only on macOS ([!mac] = everywhere else)
+//! [mac] Quit AfterCraft | app.quit           only on macOS ([!mac] = everywhere else)
 //! ```
 //!
 //! An entry's shortcut is the command's default shortcut unless the line gives one (needed for
@@ -22,9 +22,9 @@
 //! (`| F3, Cmd+Shift+T`); the menus show the first. Adobe-service entries (Team Projects,
 //! Libraries, Bridge, Media Encoder, Behance, Creative Cloud…) are intentionally absent; the
 //! Essential Graphics workspace uses the Properties panel and the Essential Graphics panel, whose
-//! templates use EffectCraft's own open `.ectemplate` format.
+//! templates use AfterCraft's own open `.ectemplate` format.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -203,14 +203,25 @@ pub fn top_level() -> Vec<&'static str> {
 
 /// The menu bar for this platform.
 pub fn menu_bar() -> &'static [MenuNode] {
-    static BAR: OnceLock<Vec<MenuNode>> = OnceLock::new();
-    BAR.get_or_init(|| {
+    // Entries have static references (shortcuts and automation retain them), so keep earlier
+    // revisions alive. Registration is append-only and capped at MAX_PLUGINS: at most MAX_PLUGINS + 1 trees.
+    static BAR: OnceLock<Mutex<Vec<(usize, &'static [MenuNode])>>> = OnceLock::new();
+    let count = crate::effects::plugin::plugins().len();
+    let mut revisions = BAR.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, nodes)) = revisions.iter().find(|(revision, _)| *revision == count) {
+        return nodes;
+    }
+    let nodes: &'static [MenuNode] = Box::leak(
         // The tree is a constant (a test parses it on every platform); never panic over it.
-        parse(TREE, cfg!(target_os = "macos")).unwrap_or_else(|e| {
-            log::error!("menu tree: {e}");
-            Vec::new()
-        })
-    })
+        parse(TREE, cfg!(target_os = "macos"))
+            .unwrap_or_else(|e| {
+                log::error!("menu tree: {e}");
+                Vec::new()
+            })
+            .into_boxed_slice(),
+    );
+    revisions.push((count, nodes));
+    nodes
 }
 
 /// Every entry with its submenu path (`["Layer", "Blending Mode"]`), depth first.
@@ -485,8 +496,8 @@ fn effect_categories() -> Vec<MenuNode> {
 
 /// The After Effects menu layout. Labels use "..." like AE's macOS menus.
 pub const TREE: &str = r#"
-[mac] EffectCraft
-  About EffectCraft... | app.about
+[mac] AfterCraft
+  About AfterCraft... | app.about
   ---
   Settings...
     General... | app.settings {"page":"general"} | Cmd+Alt+;
@@ -507,11 +518,11 @@ pub const TREE: &str = r#"
     3D... | app.settings {"page":"3d"}
     Scripting & Expressions... | app.settings {"page":"scripting"}
   ---
-  Hide EffectCraft | app.hide
+  Hide AfterCraft | app.hide
   Hide Others | app.hideOthers
   Show All | app.showAll
   ---
-  Quit EffectCraft | app.quit
+  Quit AfterCraft | app.quit
 File
   New
     New Project | file.newProject
@@ -538,7 +549,8 @@ File
     File... | file.import
     Multiple Files... | file.importMultiple
     Adobe Premiere Pro Project... | file.importTimeline
-    EffectCraft Project... | file.importProject
+    AfterCraft Project... | file.importProject
+    After Effects Project... | file.importAep
     Placeholder... | file.importPlaceholder
     Solid... | file.importSolid
     Lottie... | file.importLottie
@@ -970,6 +982,14 @@ Effect
   Remove All | effect.removeAll
   ---
   Manage Effects... | effect.manage
+  Install Plug-in Download... | effect.plugins.install
+  Open Plug-in Install Folder | effect.plugins.folder
+  Plug-in Edition Preference... | effect.plugins.preference
+  Scan Plug-in Folder... | effect.plugins.scan
+  Scan Installed Plug-ins | effect.plugins.scanInstalled
+  Add Plug-in Library Folder... | effect.plugins.addLibrary
+  Plug-in Installation Progress | window.panel {"panel":"progress"}
+  ---
   Load Effect Plug-in... | effect.plugins.load
   ---
   @effects
@@ -1230,7 +1250,7 @@ Window
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
   @dynamic:scriptPanels
 Help
-  EffectCraft Help... | help.docs {"page":"help"} | F1
+  AfterCraft Help... | help.docs {"page":"help"} | F1
   Scripting Help... | help.docs {"page":"scripting"}
   Expression Reference... | help.docs {"page":"expressions"}
   Effect Reference... | help.docs {"page":"effects"}
@@ -1244,15 +1264,15 @@ Help
   Enable Logging | help.enableLogging
   Reveal Logging File | help.revealLogFile
   ---
-  Join the ArtCraft Discord... | help.discord
+  AfterCraft community... | help.discord
   Provide Feedback... | help.reportIssue
   ---
-  ArtCraft Website | help.website
-  EffectCraft Home Page | help.appPage
-  EffectCraft on GitHub | help.github
+  AfterCraft Website | help.website
+  AfterCraft Home Page | help.appPage
+  AfterCraft on GitHub | help.github
   Open Demo Project | file.openDemoProject
   [!mac] ---
-  [!mac] About EffectCraft... | app.about
+  [!mac] About AfterCraft... | app.about
 "#;
 
 #[cfg(test)]

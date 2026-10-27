@@ -13,11 +13,18 @@ workspace = true
 # The WebAssembly runtime (wasmi, a pure-Rust interpreter). Hosts enable it on native; without
 # it `load_wasm` reports that WebAssembly plug-ins are unavailable.
 wasm = ["dep:wasmi"]
+native-aex = ["dep:serde", "dep:image", "dep:tempfile", "dep:zip"]
 
 [dependencies]
 effectcraft-effects = { workspace = true }
 serde_json = { workspace = true }
 wasmi = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+image = { workspace = true, optional = true }
+tempfile = { version = "3", optional = true }
+zip = { version = "6", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [dev-dependencies]
 effectcraft-keyframe = { workspace = true }

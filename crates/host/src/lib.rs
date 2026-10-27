@@ -12,6 +12,8 @@ use effectcraft_engine::{ExportJob, ExportResult, Exporter, Importer, Session};
 use effectcraft_project::Footage;
 pub use effectcraft_script as script;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod aep;
 pub mod app_dirs;
 
 struct MediaImporter;
@@ -82,6 +84,18 @@ impl Exporter for FileExporter {
 
 /// A new session with media, import, expressions, scripting and export enabled.
 pub fn session() -> Session {
+    let mut session = staging_session();
+    if session.plugin_installer.is_some()
+        && let Err(error) = session.execute("effect.plugins.preference", serde_json::json!({"prompt":false}))
+    {
+        log::warn!("Cannot load plug-in edition preference: {error}");
+    }
+    session
+}
+
+/// Fully wired but with no loaded settings or live configuration writer. Import scripts
+/// build their project here before the engine merges it into the caller's document.
+fn staging_session() -> Session {
     Session {
         // The desktop app, the CLI and the MCP server share installed Roto Brush models.
         models_dir: config_dir().map(|d| d.join("models")),
@@ -93,14 +107,36 @@ pub fn session() -> Session {
         script: Some(effectcraft_script::runner),
         script_ui: effectcraft_engine::scriptui::ScriptUi { dispatch: Some(effectcraft_script::dispatch_ui), ..Default::default() },
         plugin_loader: effectcraft_plugin::wasm_available().then_some(effectcraft_plugin::loader as effectcraft_engine::PluginLoader),
+        plugin_installer: cfg!(windows).then_some(install_plugins as effectcraft_engine::PluginInstaller),
+        aep_importer: {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Some(aep::import as effectcraft_engine::AepImporter)
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        },
         ..Default::default()
     }
 }
 
-/// The platform config directory for EffectCraft (`EFFECTCRAFT_CONFIG_DIR` overrides):
-/// `~/Library/Application Support/EffectCraft` (macOS), `%APPDATA%\EffectCraft` (Windows),
-/// `$XDG_CONFIG_HOME/effectcraft` or `~/.config/effectcraft` (Linux and others). A `portable.txt`
-/// beside the executable puts it in `EffectCraftData` there instead ([`app_dirs`]).
+fn install_plugins(request: &serde_json::Value, progress: &dyn Fn(u64, u64, &str) -> bool) -> Result<serde_json::Value, String> {
+    let settings = config_dir().ok_or("Cannot locate the AfterCraft settings folder")?;
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let worker = executable.parent().ok_or("Cannot locate the native worker directory")?.join("effectcraft-aex-probe.exe");
+    let mut request = request.clone();
+    request["settings_folder"] = serde_json::json!(settings);
+    request["worker"] = serde_json::json!(worker);
+    request["ofx_worker"] = serde_json::json!(executable.parent().ok_or("Cannot locate the OFX helper directory")?.join("effectcraft-helper-ofx.exe"));
+    effectcraft_plugin::installer(&request, progress)
+}
+
+/// The platform config directory for AfterCraft (`AFTERCRAFT_CONFIG_DIR` overrides):
+/// `~/Library/Application Support/AfterCraft` (macOS), `%APPDATA%\AfterCraft` (Windows),
+/// `$XDG_CONFIG_HOME/aftercraft` or `~/.config/effectcraft` (Linux and others). A `portable.txt`
+/// beside the executable puts it in `AfterCraftData` there instead ([`app_dirs`]).
 pub fn config_dir() -> Option<std::path::PathBuf> {
     app_dirs::current().dir.clone()
 }

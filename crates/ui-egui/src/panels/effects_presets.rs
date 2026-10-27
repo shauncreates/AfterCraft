@@ -1,6 +1,6 @@
 //! Effects & Presets: search (matches highlighted), the contents menu (colour-depth / GPU
 //! filters, animation presets on/off, categories or alphabetical, refresh), Favorites (star an
-//! effect), Recently Used, "* Animation Presets" (EffectCraft's own text animation and transition
+//! effect), Recently Used, "* Animation Presets" (AfterCraft's own text animation and transition
 //! presets and the user's `.ecpreset` files) and the effect categories. Double-click applies to the
 //! selected layers; dragging an effect or an animation preset onto a layer (timeline, viewer,
 //! Effect Controls) applies it there.
@@ -25,13 +25,13 @@ pub struct PresetFile {
     pub path: String,
 }
 
-/// Where user presets live: `$EC_PRESETS_DIR`, else `~/Documents/EffectCraft/Presets`.
+/// Where user presets live: `$EC_PRESETS_DIR`, else `~/Documents/AfterCraft/Presets`.
 pub fn presets_dir() -> Option<std::path::PathBuf> {
     if let Ok(d) = std::env::var("EC_PRESETS_DIR") {
         return Some(d.into());
     }
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()?;
-    Some(std::path::Path::new(&home).join("Documents").join("EffectCraft").join("Presets"))
+    Some(std::path::Path::new(&home).join("Documents").join("AfterCraft").join("Presets"))
 }
 
 /// The `.ecpreset` files in `dir`, sorted by name.
@@ -356,8 +356,17 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mut y = list.min.y - scroll.offset;
     let mut apply: Option<Apply> = None;
     let reg = effectcraft_engine::effects::all();
+    let edition = app.session.native_plugin_edition;
     let keep = |e: &effectcraft_engine::effects::EffectSpec| {
-        depth_keeps(&view.depth, e)
+        // Native adapters append these tags for all ids, including older hand-built profiles.
+        // Keep both registered so changing this preference cannot break an existing project.
+        let edition_keeps = match edition {
+            Some(effectcraft_engine::NativePluginEdition::Adobe) => !e.name.ends_with(" [OFX]"),
+            Some(effectcraft_engine::NativePluginEdition::Ofx) => !e.name.ends_with(" [Adobe]"),
+            None => true,
+        };
+        edition_keeps
+            && depth_keeps(&view.depth, e)
             && (query.is_empty() || effectcraft_engine::effects::name_matches(e, &query) || crate::i18n::effects::matches(e.id, e.name, &query))
     };
     let lookup = |id: &str| reg.iter().find(|e| e.id == id);

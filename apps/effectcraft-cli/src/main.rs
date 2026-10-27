@@ -1,4 +1,4 @@
-//! EffectCraft headless CLI: one-shot agent commands, frame rendering and the MCP server.
+//! AfterCraft headless CLI: one-shot agent commands, frame rendering and the MCP server.
 //!
 //! ```text
 //! effectcraft-cli info                                        project + engine summary
@@ -357,7 +357,7 @@ fn backend(args: &Args, default_demo: bool) -> Result<Backend, Failure> {
 fn session(args: &Args) -> Result<effectcraft_engine::Session, Failure> {
     let mut s = effectcraft_host::session();
     if args.flag("--autosave") {
-        let dir = effectcraft_host::config_dir().ok_or_else(|| Failure::Error("--autosave: no config directory; set EFFECTCRAFT_CONFIG_DIR".into()))?;
+        let dir = effectcraft_host::config_dir().ok_or_else(|| Failure::Error("--autosave: no config directory; set AFTERCRAFT_CONFIG_DIR".into()))?;
         // Read only auto-save settings. Opting in must not change headless rendering or load
         // the desktop's models, shortcuts, disk cache or recovery sentinel.
         use effectcraft_engine::config::ConfigStore;
@@ -471,7 +471,7 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
                 emit(&info, true);
             } else {
                 say!(
-                    "EffectCraft {} ({}), {} commands, {} effects",
+                    "AfterCraft {} ({}), {} commands, {} effects",
                     info["version"].as_str().unwrap_or(""),
                     info["mode"].as_str().unwrap_or(""),
                     info["commands"],
@@ -634,8 +634,7 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
             }
             let server = McpServer::new(b);
             let mut server = if args.flag("--autosave") {
-                let root =
-                    effectcraft_host::config_dir().ok_or_else(|| Failure::Error("--autosave: no config directory; set EFFECTCRAFT_CONFIG_DIR".into()))?;
+                let root = effectcraft_host::config_dir().ok_or_else(|| Failure::Error("--autosave: no config directory; set AFTERCRAFT_CONFIG_DIR".into()))?;
                 server.with_autosave(&root)?
             } else {
                 server
@@ -1138,7 +1137,7 @@ fn adv3d_bench_comp(p: &mut effectcraft_engine::project::Project) -> Option<Item
     }
     add(p, &comp, LayerSource::Text, &|l| {
         l.switches.three_d = true;
-        let doc = TextDoc { text: "EffectCraft".into(), size: 180.0, fill: [0.95, 0.75, 0.2, 1.0], apply_fill: true, ..Default::default() };
+        let doc = TextDoc { text: "AfterCraft".into(), size: 180.0, fill: [0.95, 0.75, 0.2, 1.0], apply_fill: true, ..Default::default() };
         set(l, "text/sourceText", Value::Text(Box::new(doc)));
         let mut next = 900_000u64;
         l.props.children.push(build::extrusion_geometry_options(&mut Ids(&mut next)).into());

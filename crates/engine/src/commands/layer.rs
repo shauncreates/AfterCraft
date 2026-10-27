@@ -922,9 +922,18 @@ fn timing(s: &mut Session, p: &Value) -> Result<Value> {
     let (cid, ids) = layers_p(s, p)?;
     let t = s.time();
     let op = str_p(p, "op").unwrap_or("set").to_string();
-    // Layer times stay on frame boundaries of the comp (as in AE).
+    // Interactive edits stay on frame boundaries; import/scripting can retain subframes.
     let fr = s.project.comp(cid).ok_or(EngineError::NoComp)?.frame_rate;
-    let snap = |k: &str| f_p(p, k).map(|v| fr.snap_nearest(Tick::from_seconds_f64(v)));
+    let snap_to_frame = match p.get("snap") {
+        None => true,
+        Some(value) => value.as_bool().ok_or_else(|| bad("layer.timing", "`snap` must be a boolean"))?,
+    };
+    let snap = |k: &str| {
+        f_p(p, k).map(|v| {
+            let time = Tick::from_seconds_f64(v);
+            if snap_to_frame { fr.snap_nearest(time) } else { time }
+        })
+    };
     let (delta, start, inp, outp) = (snap("delta"), snap("start"), snap("in"), snap("out"));
     // Relative trims: each layer moves its own in/out point by the same amount, so dragging an
     // edge of several selected layers trims them all together (as in AE).
@@ -1668,7 +1677,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Layer Timing",
             [],
             None,
-            "{layers?, op?: moveInToTime|moveOutToTime|moveInToStart|moveOutToEnd|trimInToTime|trimOutToTime, delta?, start?, in?, out?, inDelta?, outDelta? (seconds, per layer), merge?}",
+            "{layers?, op?: moveInToTime|moveOutToTime|moveInToStart|moveOutToEnd|trimInToTime|trimOutToTime, delta?, start?, in?, out?, inDelta?, outDelta? (seconds, per layer), snap?: bool (default true), merge?}",
             has_layers,
             timing
         ),

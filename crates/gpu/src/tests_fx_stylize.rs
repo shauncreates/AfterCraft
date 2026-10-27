@@ -20,10 +20,38 @@ fn pt(x: f64, y: f64) -> Value {
     Value::Vec2([x, y])
 }
 
+/// Posterize has hard decision boundaries. A quantized input can round to opposite sides
+/// on CPU/GPU before the effect, so use the documented discontinuous-mode allowance only
+/// for compositing. The direct full/half-resolution kernels must still agree at 1e-3.
+fn posterize_case(level: f64) {
+    const ID: &str = "ec.stylize.posterize";
+    let vals = [("level", n(level))];
+    crate::tests::effect_direct(ID, &vals, false);
+    crate::tests::effect_direct(ID, &vals, true);
+    for depth in [BitDepth::Bpc8, BitDepth::Bpc32] {
+        let mut s = Scene::new(depth);
+        let bg = s.solid([0.15, 0.1, 0.2], 97, 61);
+        s.push(bg);
+        let mut l = s.footage(70, 44);
+        s.effect(&mut l, ID, &vals);
+        set(&mut l, "transform/rotation", n(8.0));
+        s.push(l);
+        for scale in [1.0, 0.5] {
+            let d = compare_at(&s, RenderOpts { scale, ..opts() }, Tick::ZERO);
+            if let Some(d) = &d {
+                // A boundary flip changes at most one posterize step, plus output rounding.
+                // This also rejects NaNs/infinity rather than hiding them in a pixel allowance.
+                assert!(d.max <= 1.0 / (level as f32 - 1.0) + 4.0 / 255.0, "posterize level {level} {depth:?} scale {scale}: delta {}", d.max);
+            }
+            check(&format!("{ID} level {level} {depth:?} scale {scale}"), d, 0.005);
+        }
+    }
+}
+
 #[test]
 fn posterize_thresholds_strobe_vignette() {
-    effect_case("ec.stylize.posterize", &[("level", n(4.0))]);
-    effect_case("ec.stylize.posterize", &[("level", n(9.0))]);
+    posterize_case(4.0);
+    posterize_case(9.0);
     effect_case("ec.stylize.threshold", &[("level", n(100.0))]);
     effect_case("ec.stylize.threshold", &[("level", n(181.0))]);
     effect_case("ec.stylize.ccthreshold", &[]);

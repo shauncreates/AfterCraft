@@ -170,20 +170,25 @@ mod tests {
     use super::*;
     use kurbo::Shape;
 
+    // A real gvar/HVAR fixture with known geometry: system fonts can legally keep H's
+    // outline unchanged along an optical-size axis, and some machines have none installed.
+    fn variable_fixture() -> (FaceId, Vec<FontAxis>) {
+        static FACE: OnceLock<FaceId> = OnceLock::new();
+        let face = *FACE.get_or_init(|| fonts::add_font_data(include_bytes!("../../../assets/fonts/AfterCraftVariableFixture.ttf").to_vec())[0]);
+        (face, font_axes(face))
+    }
+
     #[test]
     fn static_fonts_have_no_axes_and_variable_outlines_move() {
         let inter = crate::resolve("Inter", "Regular").face;
         assert!(font_axes(inter).is_empty());
-        // A variable system font, when one is installed (macOS ships several): its outline
-        // changes along an axis. Skipped on machines without one.
-        let Some((face, axes)) = find_variable_face() else {
-            eprintln!("no variable font installed: outline check skipped");
-            return;
-        };
+        let (face, axes) = variable_fixture();
         let a = axes.iter().find(|x| x.max > x.min).unwrap();
         let gid = fonts::face(face).glyph('H').or_else(|| fonts::face(face).glyph('A')).unwrap_or(1);
         let lo = outline_units_at(face, gid, &[(a.tag.clone(), a.min)]).unwrap();
         let hi = outline_units_at(face, gid, &[(a.tag.clone(), a.max)]).unwrap();
+        assert_eq!(lo.area().abs(), 150_000.0);
+        assert_eq!(hi.area().abs(), 210_000.0);
         assert_ne!(lo.area(), hi.area(), "{} {}..{}", a.tag, a.min, a.max);
         // The default location is the static outline.
         let d = outline_units_at(face, gid, &[(a.tag.clone(), a.default)]).unwrap();
@@ -197,10 +202,7 @@ mod tests {
         let id = intern(&[("wght".into(), 700.0)]);
         assert_eq!(intern(&[("wght".into(), 700.0)]), id);
         assert_eq!(coords(id).as_slice(), &[("wght".to_string(), 700.0)]);
-        let Some((face, axes)) = find_variable_face() else {
-            eprintln!("no variable font installed: skipped");
-            return;
-        };
+        let (face, axes) = variable_fixture();
         let info = crate::fonts::face(face).info.clone();
         // An axis that moves the advance: `wdth` and `wght` usually do, but a monospaced family
         // keeps its advances fixed along `wght` (Google Sans Code does) and moves them along its
@@ -215,10 +217,7 @@ mod tests {
             ..Default::default()
         };
         let ranged: Vec<&FontAxis> = axes.iter().filter(|a| a.max > a.min).collect();
-        if ranged.is_empty() {
-            eprintln!("no variable axis installed here carries a range: skipped");
-            return;
-        }
+        assert!(!ranged.is_empty());
         let mut moving = None;
         for a in &ranged {
             let (lo, hi) = (crate::layout::measure("Hamburgefonts", &st(a, a.min)), crate::layout::measure("Hamburgefonts", &st(a, a.max)));
@@ -227,10 +226,7 @@ mod tests {
                 break;
             }
         }
-        if crate::resolve(&info.family, &info.style).face != face {
-            eprintln!("variable face not reachable by family/style: skipped");
-            return;
-        }
+        assert_eq!(crate::resolve(&info.family, &info.style).face, face);
         let ink = |a: &FontAxis, v: f32| {
             let l = crate::layout::layout("H", &st(a, v), &crate::ParagraphStyle::default());
             l.glyphs.iter().map(|g| crate::glyph_outline(g).area().abs()).sum::<f64>()

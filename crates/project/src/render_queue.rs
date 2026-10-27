@@ -1059,7 +1059,7 @@ pub struct OutputModule {
     /// WebM Opus audio bitrate (stereo total), kbit/s.
     pub opus_bitrate_kbps: u32,
     pub opus_application: OpusApplication,
-    /// Include Project Link: kept for parity; EffectCraft's writers have no place to store a
+    /// Include Project Link: kept for parity; AfterCraft's writers have no place to store a
     /// link back to the project, so it changes nothing in the file.
     pub include_project_link: bool,
 }

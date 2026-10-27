@@ -333,7 +333,7 @@ struct McpChild {
 impl McpChild {
     fn start(config: &std::path::Path, autosave: bool) -> Self {
         let mut command = bin();
-        command.arg("mcp").env("EFFECTCRAFT_CONFIG_DIR", config).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        command.arg("mcp").env("AFTERCRAFT_CONFIG_DIR", config).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         if autosave {
             command.arg("--autosave");
         }
@@ -442,7 +442,7 @@ fn mcp_autosave_preserves_work_when_stdout_is_closed() {
     let config = mcp_config("mcp-broken-pipe");
     let mut child = bin()
         .args(["mcp", "--autosave"])
-        .env("EFFECTCRAFT_CONFIG_DIR", &config)
+        .env("AFTERCRAFT_CONFIG_DIR", &config)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -471,13 +471,13 @@ fn mcp_autosave_is_opt_in_and_rejects_invalid_combinations() {
     client.eof();
     assert!(std::fs::read_dir(&config).unwrap().next().is_none());
     for args in [["mcp", "--autosave", "--bridge", "1"].as_slice(), ["info", "--autosave"].as_slice()] {
-        let out = bin().args(args).env("EFFECTCRAFT_CONFIG_DIR", &config).output().unwrap();
+        let out = bin().args(args).env("AFTERCRAFT_CONFIG_DIR", &config).output().unwrap();
         assert_eq!(out.status.code(), Some(2));
         assert!(String::from_utf8_lossy(&out.stderr).contains("--autosave"));
     }
     let blocked = config.join("file-not-directory");
     std::fs::write(&blocked, "file").unwrap();
-    let out = bin().args(["mcp", "--autosave"]).env("EFFECTCRAFT_CONFIG_DIR", blocked).output().unwrap();
+    let out = bin().args(["mcp", "--autosave"]).env("AFTERCRAFT_CONFIG_DIR", blocked).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("MCP auto-save"));
     assert!(!String::from_utf8_lossy(&out.stderr).contains("panicked"));

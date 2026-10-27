@@ -22,7 +22,7 @@ impl AutoSave {
             root.join(autosave::AUTOSAVE_FOLDER).join("MCP")
         };
         if base.to_str().is_none() {
-            return Err(std::io::Error::other("the MCP auto-save folder must be valid UTF-8; set EFFECTCRAFT_CONFIG_DIR to a UTF-8 path"));
+            return Err(std::io::Error::other("the MCP auto-save folder must be valid UTF-8; set AFTERCRAFT_CONFIG_DIR to a UTF-8 path"));
         }
         std::fs::create_dir_all(&base)?;
         let previous = previous_sessions(&base);

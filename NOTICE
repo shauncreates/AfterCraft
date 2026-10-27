@@ -3,9 +3,8 @@ Copyright (c) 2026 ArtCraft Team and the EffectCraft contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option
 (LICENSE-MIT, LICENSE-APACHE).
 
-The ArtCraft name, wordmark and logos in docs/brand/ are trademarks of the ArtCraft Team. They are
-not open source and are not covered by the license above; their terms are in
-docs/brand/LICENSE-brand.txt.
+The ArtCraft name and logos are trademarks of the ArtCraft Team. Restricted ArtCraft brand
+artwork has been removed from this modified distribution. See PROVENANCE.md.
 
 Third-party material
 
@@ -20,3 +19,9 @@ The optional PDF document reader uses craft-pdf and Hayro-syntax 0.7.2, MIT OR A
 The shared patched syntax source is centralized in storytold/craft-libs, transferred from
 PdfCraft revision 9ed3abe4907a127d36b12fbfeee71d7e26248da1. This parser-only use embeds no
 Hayro fonts, CMaps or image codecs; EffectCraft keeps its existing fonts and drawing filters.
+
+AfterCraft modifications
+
+Copyright (c) 2026 AfterCraft contributors.
+Based on EffectCraft 0.16.0, with native-plugin hosting, project-import changes, independent
+application identity and Windows packaging. Modifications are MIT OR Apache-2.0.

@@ -1,4 +1,4 @@
-//! A WebM rendered by EffectCraft and imported back reports its real frame count (#1429). Matroska
+//! A WebM rendered by AfterCraft and imported back reports its real frame count (#1429). Matroska
 //! stores the duration in whole milliseconds, so at 30 fps a 1-frame file lasts 33 ms, just short
 //! of one 33.33 ms frame.
 

@@ -590,6 +590,12 @@ pub fn name_matches(spec: &EffectSpec, query: &str) -> bool {
 pub fn lookup(name_or_id: &str) -> Option<&'static EffectSpec> {
     find(name_or_id)
         .or_else(|| all().into_iter().find(|s| s.name.eq_ignore_ascii_case(name_or_id)))
+        .or_else(|| {
+            let suffixes = if plugin::adobe_plugins_preferred() { [" [Adobe]", " [OFX]"] } else { [" [OFX]", " [Adobe]"] };
+            suffixes
+                .into_iter()
+                .find_map(|suffix| all().into_iter().find(|s| s.name.strip_suffix(suffix).is_some_and(|name| name.eq_ignore_ascii_case(name_or_id))))
+        })
         .or_else(|| ALIASES.iter().find(|(_, names)| names.iter().any(|a| a.eq_ignore_ascii_case(name_or_id))).and_then(|(id, _)| find(id)))
         .or_else(|| {
             // Display names of earlier versions.

@@ -1,0 +1,12 @@
+[
+  {
+    "file": "LICENSE-APACHE",
+    "source": "https://raw.githubusercontent.com/wasmi-labs/wasmi/2970aa871cc1001b57b267ccecdcd1e42306199e/LICENSE-APACHE",
+    "sha256": "f031c1608e4a19e8cbcc3394cdba838067e79189610227459e8ffcd669e6f52d"
+  },
+  {
+    "file": "LICENSE-MIT",
+    "source": "https://raw.githubusercontent.com/wasmi-labs/wasmi/2970aa871cc1001b57b267ccecdcd1e42306199e/LICENSE-MIT",
+    "sha256": "172bc1497507c1c363496bc23b0f16de8fa8e94befa85db6c8d9fa790e0a8657"
+  }
+]

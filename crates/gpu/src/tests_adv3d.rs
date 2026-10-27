@@ -434,8 +434,7 @@ fn gpu_environment_light_on_flat_extrusions_has_no_nan() {
     let cid = p.add_item("C", Default::default(), None, ItemKind::Comp(c.into()));
     add(&mut p, cid, LayerSource::Text, |l| {
         l.switches.three_d = true;
-        let doc =
-            effectcraft_keyframe::TextDoc { text: "EffectCraft".into(), size: 45.0, fill: [0.95, 0.75, 0.2, 1.0], apply_fill: true, ..Default::default() };
+        let doc = effectcraft_keyframe::TextDoc { text: "AfterCraft".into(), size: 45.0, fill: [0.95, 0.75, 0.2, 1.0], apply_fill: true, ..Default::default() };
         set(l, "text/sourceText", Value::Text(Box::new(doc)));
         let mut next = 900_000u64;
         l.props.children.push(build::extrusion_geometry_options(&mut build::Ids(&mut next)).into());

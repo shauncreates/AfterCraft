@@ -1,4 +1,4 @@
-//! The EffectCraft egui frontend (swappable): docking panels, the Composition viewer, the
+//! The AfterCraft egui frontend (swappable): docking panels, the Composition viewer, the
 //! Timeline with property twirl-downs and keyframes, Effect Controls, Effects & Presets, Preview,
 //! Info, Character/Paragraph/Align, menus, dialogs and the control channel.
 //!
@@ -55,6 +55,7 @@ const EDIT_QUIET: f64 = 0.3;
 /// Modal dialogs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialog {
+    NativePluginPreference,
     About,
     NewComp,
     CompSettings,
@@ -110,7 +111,7 @@ pub type SystemThemeFn = Box<dyn Fn(&egui::Context) -> Option<egui::Theme>>;
 pub enum FileDialog {
     /// Files to open or import with these extensions; several when `many`.
     Open { exts: Vec<String>, many: bool },
-    /// An EffectCraft project to open.
+    /// An AfterCraft project to open.
     OpenProject,
     /// A folder.
     Folder,

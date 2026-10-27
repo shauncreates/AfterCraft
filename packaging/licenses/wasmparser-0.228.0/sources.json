@@ -1,0 +1,17 @@
+[
+  {
+    "file": "LICENSE-APACHE",
+    "source": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/e66235859a6ec0502bf6f9dcc358953eda4cafcc/LICENSE-APACHE",
+    "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+  },
+  {
+    "file": "LICENSE-Apache-2.0_WITH_LLVM-exception",
+    "source": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/e66235859a6ec0502bf6f9dcc358953eda4cafcc/LICENSE-Apache-2.0_WITH_LLVM-exception",
+    "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5"
+  },
+  {
+    "file": "LICENSE-MIT",
+    "source": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/e66235859a6ec0502bf6f9dcc358953eda4cafcc/LICENSE-MIT",
+    "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+  }
+]

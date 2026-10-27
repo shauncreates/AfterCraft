@@ -853,11 +853,11 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
 const COPY_COMMANDS: &[&str] =
     &["edit.copy", "edit.cut", "edit.copyWithPropertyLinks", "edit.copyWithRelativePropertyLinks", "edit.copyExpressionOnly", "keys.copy", "effect.copy"];
 
-/// A line for the system clipboard naming what EffectCraft copied. The system clipboard must
+/// A line for the system clipboard naming what AfterCraft copied. The system clipboard must
 /// hold something: with nothing on it, the windowing layer sends no paste event for Ctrl+V.
 fn clipboard_note(s: &effectcraft_engine::Session) -> String {
     let st = &s.state;
-    let n = |n: usize, one: &str, many: &str| format!("EffectCraft: {n} {}", if n == 1 { one } else { many });
+    let n = |n: usize, one: &str, many: &str| format!("AfterCraft: {n} {}", if n == 1 { one } else { many });
     if st.clip_is_keys && !st.key_clipboard.is_empty() {
         n(st.key_clipboard.iter().map(|c| c.keys.len()).sum(), "keyframe", "keyframes")
     } else if !st.effect_clipboard.is_empty() {
@@ -865,7 +865,7 @@ fn clipboard_note(s: &effectcraft_engine::Session) -> String {
     } else if !st.contents_clipboard.is_empty() {
         n(st.contents_clipboard.len(), "shape item", "shape items")
     } else if st.link_clipboard.is_some() {
-        "EffectCraft: property links".into()
+        "AfterCraft: property links".into()
     } else {
         n(st.clipboard.len(), "layer", "layers")
     }
@@ -910,6 +910,19 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
     let now = ctx.input(|i| i.time);
     let v = &mut app.ui.viewer;
     Ok(match id {
+        "file.importAep.report" => {
+            let body = p["body"].as_str().unwrap_or("The import report is available in the command result.");
+            crate::panels::forms::info(app, "After Effects Import Report", body);
+            json!({})
+        }
+        "effect.plugins.chooseEdition" => {
+            if app.dialog.is_some() && app.dialog != Some(crate::Dialog::NativePluginPreference) {
+                app.session.events.push(effectcraft_engine::Event::Frontend { command: id.into(), params: p });
+            } else {
+                app.dialog = Some(crate::Dialog::NativePluginPreference);
+            }
+            json!({})
+        }
         "mediaBrowser.copySourcePath" => {
             let path = p.get("path").and_then(Value::as_str).filter(|path| !path.is_empty()).ok_or("A source path is required")?;
             ctx.copy_text(path.to_string());
@@ -1384,11 +1397,14 @@ fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) -> Option<Res
         "file.exportLottie" => ("path", Ask::Save("Animation.json")),
         "file.importLottie" => ("path", Ask::Open(&["json", "lottie"])),
         "file.importProject" => ("path", Ask::Open(&["ecproj", "ecprojx"])),
+        "file.importAep" => ("path", Ask::Open(&["aep", "aepx"])),
         "file.importTimeline" => ("path", Ask::Open(&["xml", "fcpxml", "otio", "edl", "aaf", "omf"])),
         "render.saveCurrentPreview" => ("path", Ask::Save("Preview.mp4")),
         "file.runScript" if params.get("name").is_none() => ("path", Ask::Open(&["jsx", "js", "jsonl", "json", "txt"])),
         "file.installScript" | "file.installScriptUIPanel" => ("path", Ask::Open(&["jsx", "js"])),
-        "effect.plugins.load" if params.get("folder").is_none() => ("path", Ask::Open(&["wasm", "wat"])),
+        "effect.plugins.install" => ("path", Ask::Open(&["aex", "ofx", "wasm", "wat", "zip", "exe", "msi", "jsx", "js"])),
+        "effect.plugins.scan" | "effect.plugins.addLibrary" => ("folder", Ask::Folder),
+        "effect.plugins.load" if params.get("folder").is_none() => ("path", Ask::Open(&["wasm", "wat", "json"])),
         "file.replaceFootage" => ("path", Ask::Import),
         "file.relinkFootage" => ("folder", Ask::Folder),
         "file.collectFiles" => ("folder", Ask::Save("Collected Files")),
@@ -1411,7 +1427,7 @@ fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) -> Option<Res
     }
     const MEDIA: &[&str] = &[
         "mp4", "mov", "m4v", "mkv", "webm", "mxf", "png", "jpg", "jpeg", "gif", "webp", "tif", "tiff", "bmp", "exr", "dpx", "cin", "wav", "aif", "aiff", "mp3",
-        "flac", "ogg", "opus", "svg", "pdf", "ai", "eps", "psd", "psb", "tga", "hdr", "gltf", "glb", "obj", "stl", "fbx", "json", "csv", "tsv",
+        "flac", "ogg", "opus", "svg", "pdf", "ai", "eps", "psd", "psb", "tga", "hdr", "gltf", "glb", "obj", "stl", "fbx", "json", "csv", "tsv", "aep", "aepx",
     ];
     // A host whose blocking dialogs are unsafe inside this frame shows the dialog without
     // blocking — macOS: the nested event loop re-entered winit's handler on a drag over the

@@ -1,5 +1,30 @@
 # Plug-ins and extensions
 
+> This test copy includes an **experimental Windows AEX worker adapter**. Load an explicitly
+> selected `.ecaex.json` descriptor using Effect ▸ Load Effect Plug-in or `effect.plugins.load`.
+> It becomes a normal effect with animatable slider, checkbox, popup, angle, color and point
+> parameters. Native plugins execute with your OS access in a separate worker; they do not have
+> the WebAssembly sandbox described below. The adapter uses 8-bit SDR PNG at Full and reduced
+> preview resolutions, with rational downsampling, the original layer dimensions, the composition's
+> rational frame rate and one input layer. CPU SmartFX and legacy
+> rendering are supported; `render_mode` selects `auto` (default), `smart` or `legacy`.
+> Native plugin GPU, HDR, expanded bounds, temporal/additional inputs and CEP are unavailable.
+> Descriptors are not embedded in projects; load them before opening/rendering projects that
+> use them. Explicitly opted-in `.ecaex.json` profiles in the private Plug-ins folder load at startup.
+> Worker failures preserve the input frame and log an error. Vendor watermark/error images can
+> return success and are **not automatically verified**. The earlier modified Adobe Sapphire
+> and Continuum installations are not official conformance references. The separate official
+> Sapphire OFX Glow test produces visible glow at multiple scales and responds to Brightness;
+> full-suite compatibility and supported-host reference comparisons remain unverified.
+
+The experimental desktop build also provides Effect > Install Plug-in Download, Scan Plug-in
+Folder, Scan Installed Plug-ins and Add Plug-in Library Folder. Installation discovers
+names/categories/parameters from each plugin and runs in the cancellable Progress panel.
+Descriptors persist automatically; individual failures are reported. The registry is bounded at
+2,048 effects, with 1,024 parameters per effect. OFX is enabled through a separate isolated helper
+with float RGBA transport. Native names include `[Adobe]` / `[OFX]` so installed editions remain
+distinct. This is hosting, not binary conversion.
+
 EffectCraft's core aims at After Effects parity. What After Effects users get from third parties
 (effect plug-ins, scripts, ScriptUI panels) is an extension in EffectCraft too, and EffectCraft
 offers the same kinds of extension points as After Effects so that anyone can write their own.
@@ -195,7 +220,7 @@ Every plug-in describes itself with a JSON manifest:
 * Parameter types: `slider` (`default`, `min`, `max`, optional `sliderMin`, `sliderMax`,
   `decimals`), `angle` (`default` degrees), `checkbox` (`default` bool), `popup` (`options`,
   `default` index), `point` (`default` as fractions of the layer size, `[0.5, 0.5]` = centre),
-  `color` (`default` RGBA 0–1). Parameter ids are letters, digits and `_`, unique; at most 256
+  `color` (`default` RGBA 0–1). Parameter ids are letters, digits and `_`, unique; at most 1024
   parameters; a slider needs `min ≤ default ≤ max` (and `sliderMin ≤ sliderMax`); the manifest
   is at most 1 MiB.
 
@@ -253,10 +278,56 @@ impl EffectPlugin for Swap {
 register_plugin(Arc::new(Swap(manifest)))?; // before the UI builds its menus
 ```
 
-`PluginParams` reads values by parameter id (`f`, `b`, `point`, `color`). At most 64 plug-in
+`PluginParams` reads values by parameter id (`f`, `b`, `point`, `color`). At most 2048 plug-in
 effects can be registered per process.
 
 ### Compatibility
+
+The experimental Windows test fork also accepts native Adobe `.aex` and OFX effects through
+external processes (`native-aex` feature). Use Effect > Install Plug-in Download to select a
+binary or complete ZIP package; Scan Plug-in Folder recursively discovers its effects and
+Scan Installed Plug-ins checks standard Adobe/OFX and private package locations. Effect names,
+categories and basic controls come from the plugins, with no vendor whitelist. Generated
+`.ecaex.json` / `.ecofx.json` profiles reload from the settings `Plug-ins` folder at startup.
+
+Open Plug-in Install Folder shows `NativePlugins`, the destination for vendor setups that
+offer custom paths. Selecting `.exe`/`.msi` launches the normal vendor installer; finish it,
+then scan. The launch result does not claim installation completed. ZIPs preserve their resource
+tree in versioned `NativePackages` folders; archive and path limits are enforced. Plain scripts
+route to the existing script installer; CEP/UXP/compiled JSXBIN packages are explicitly refused.
+Missing shared DLL paths can be added with Add Plug-in Library Folder. Background jobs expose
+progress, cancellation and individual failures through the Progress panel and `jobs.*` commands.
+
+Native names carry `[Adobe]` / `[OFX]` suffixes. Saved ids remain stable. A one-time first-launch
+choice, shown only when Adobe plugins exist in default installation folders, selects the edition
+preferred for unqualified native names. It is saved and can be changed with
+`effect.plugins.preference` / Effect > Plug-in Edition Preference. Without an AE host, routing
+uses OFX. Once selected, Effects & Presets hides the other native edition in categories, search,
+Favorites and Recently Used; changes take effect immediately. Built-in/WASM effects and animation
+presets are unaffected. Both editions stay registered and available in the Effect menu, and saved
+projects retain their effect ids. Before a choice, the panel shows both editions.
+Automatic migration only includes
+AEX when an After Effects executable is detected in the standard Adobe folder; without it,
+installed-plugin scans skip AEX and use OFX locations. Manual loading remains explicit.
+
+Initialization does not establish rendering compatibility. Adobe transport is currently
+single-frame 8-bit CPU PNG with Full/Half/Third/Quarter and bounded custom preview scales.
+Original layer dimensions, rational SDK downsampling and buffer-space points are preserved.
+OFX uses float RGBA frames and persistent isolated helpers. It supports scaled previews and
+time sampling on footage, including parameters and effects preceding the current effect.
+Temporal requests preserve frame origins and are bounded by frame, memory, callback and time
+limits. Temporal adjustment layers, additional layer inputs and expanded output bounds remain
+unsupported. Both native adapters advertise no host GPU acceleration.
+Full vendor UI, project services, licensing compatibility and broad commercial rendering
+conformance remain incomplete. Native binaries run with normal user OS access; process isolation
+contains crashes. OFX needs the vendor's OFX edition; `.aex` cannot be converted by this host.
+
+The OFX helper derives from the permissively licensed glumbis `ec-extension-ofx` project;
+the separate helper's provenance and licenses are shipped with each experimental package.
+
+Experimental [After Effects project import](aep-import.md) can map recorded effect identities
+and supported animation to installed editions. It does not convert native binaries or licenses;
+unsupported properties remain in the preserved source record and import report.
 
 The API version is checked when a plug-in loads: a manifest or module for another version is
 refused with a message. Within a version the contract above does not change; additions (new

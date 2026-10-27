@@ -61,7 +61,7 @@ fn prefs_migrate_old_layout_and_keep_unknown_keys() {
     assert_eq!(p.labels[2].name, "Aqua");
     assert_eq!(p.labels.len(), 16);
     // A bad value falls back to that page's defaults; other pages survive.
-    assert_eq!(p.memory.layer_cache_mb, 1024);
+    assert_eq!(p.memory.layer_cache_mb, Prefs::default().memory.layer_cache_mb);
     // Unknown keys (a newer version's) are kept and written back.
     let again: serde_json::Value = serde_json::from_str(&p.to_json()).unwrap();
     assert_eq!(again["futureSetting"], json!({"x": 1}));

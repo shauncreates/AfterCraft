@@ -1,4 +1,4 @@
-//! File ▸ Import ▸ EffectCraft Project: another project merges into the open one with fresh ids,
+//! File ▸ Import ▸ AfterCraft Project: another project merges into the open one with fresh ids,
 //! its references intact, in one undo step.
 
 use std::collections::HashSet;
@@ -155,4 +155,55 @@ fn import_project_rejects_bad_files_and_leaves_the_project() {
     let e = t.execute("file.importProject", json!({"path": huge.to_string_lossy()})).unwrap_err();
     assert!(e.to_string().contains("out of range"), "{e}");
     assert_eq!(t.project.items.len(), before);
+}
+
+fn staged_aep_fixture(_: &str, options: &serde_json::Value) -> Result<(Project, serde_json::Value), String> {
+    assert_eq!(options["edition"], "ofx");
+    let mut staged = Session::default();
+    staged.execute("comp.new", json!({"name":"Inner","width":32,"height":16,"duration":2})).unwrap();
+    let inner = staged.active_comp_id().unwrap();
+    staged.execute("layer.newSolid", json!({"name":"Source"})).unwrap();
+    staged.execute("comp.new", json!({"name":"Main","width":32,"height":16,"duration":2})).unwrap();
+    let nest = staged.execute("layer.addItem", json!({"item":inner.0})).unwrap()["layer"].as_u64().unwrap();
+    let rig = staged.execute("layer.newNull", json!({"name":"Rig"})).unwrap()["layer"].as_u64().unwrap();
+    staged.execute("layer.setParent", json!({"layers":[nest],"parent":rig})).unwrap();
+    Ok(((*staged.project).clone(), json!({"runtime":{"output":"Synthetic staged AE import"},"fixture":true})))
+}
+
+#[test]
+fn aep_import_merges_only_a_successful_staging_project_and_remaps_references() {
+    let mut target = Session { aep_importer: Some(staged_aep_fixture), native_plugin_edition: Some(crate::NativePluginEdition::Ofx), ..Default::default() };
+    target.execute("comp.new", json!({"name":"Existing","width":32,"height":16,"duration":2})).unwrap();
+    let before = target.project.clone();
+    let old_ids: HashSet<_> = all_ids(&before).into_iter().collect();
+    let result = target.execute("file.importAep", json!({"path":"fixture.aep"})).unwrap();
+    assert_eq!(result["report"]["fixture"], true);
+    let ids = all_ids(&target.project);
+    assert_eq!(ids.len(), ids.iter().copied().collect::<HashSet<_>>().len());
+    assert!(old_ids.is_subset(&ids.iter().copied().collect()));
+    let main = target.project.comps().find(|(id, _)| target.project.item(**id).unwrap().name == "Main").unwrap().1;
+    let nest = main.layers.iter().find(|l| matches!(l.source, LayerSource::Comp { .. })).unwrap();
+    let LayerSource::Comp { item } = nest.source else { panic!("nested comp") };
+    assert_eq!(target.project.item(item).unwrap().name, "Inner");
+    assert!(main.layers.iter().any(|l| Some(l.id) == nest.parent));
+    target.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(target.project, before, "one undo restores the entire pre-import document");
+    let result = target.execute("file.import", json!({"paths":["fixture.aepx"]})).unwrap();
+    assert_eq!(result["projects"].as_array().unwrap().len(), 1);
+    assert!(result["items"].as_array().unwrap().is_empty(), "AE projects never become footage");
+}
+
+#[test]
+fn aep_import_failure_and_invalid_arguments_preserve_the_live_document() {
+    let mut target = Session { aep_importer: Some(|_, _| Err("original parser error".into())), ..Default::default() };
+    target.execute("comp.new", json!({"name":"Keep me","width":32,"height":16,"duration":2})).unwrap();
+    let before = target.project.clone();
+    let revision = target.revision;
+    let error = target.execute("file.importAep", json!({"path":"bad.aep"})).unwrap_err();
+    assert!(error.to_string().contains("original parser error"));
+    for params in [json!({}), json!({"path":"bad.txt"}), json!({"path":"bad.aep","edition":2}), json!([])] {
+        assert!(target.execute("file.importAep", params).is_err());
+    }
+    assert_eq!(target.project, before);
+    assert_eq!(target.revision, revision);
 }

@@ -1,0 +1,5 @@
+py-aep==0.18.0
+attrs==26.1.0
+fonttools==4.67.0
+PyYAML==6.0.3
+uharfbuzz==0.57.0

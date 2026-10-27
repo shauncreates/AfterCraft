@@ -43,7 +43,11 @@ fn plugins_load(s: &mut Session, p: &Value) -> Result<Value> {
                 .map_err(|e| bad(c, format!("cannot list {dir}: {e}")))?
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("wasm")))
+                .filter(|p| {
+                    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("wasm") || x.eq_ignore_ascii_case("wat"))
+                        || p.to_string_lossy().to_ascii_lowercase().ends_with(".ecaex.json")
+                        || p.to_string_lossy().to_ascii_lowercase().ends_with(".ecofx.json")
+                })
                 .map(|p| p.to_string_lossy().to_string())
                 .collect();
             v.sort();
@@ -68,6 +72,103 @@ fn plugins_load(s: &mut Session, p: &Value) -> Result<Value> {
         s.toast(format!("Loaded {} effect plug-in(s)", loaded.len()));
     }
     Ok(json!({"loaded": loaded, "errors": errors}))
+}
+
+fn plugins_install(s: &mut Session, p: &Value) -> Result<Value> {
+    if !p.is_object() {
+        return Err(bad("effect.plugins.install", "parameters must be an object"));
+    }
+    let extension = str_p(p, "path").and_then(|s| std::path::Path::new(s).extension()).and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    if matches!(extension.as_deref(), Some("jsx" | "js")) {
+        return s.execute("file.installScript", p.clone());
+    }
+    if matches!(extension.as_deref(), Some("zxp" | "ccx" | "jsxbin")) {
+        return Err(bad("effect.plugins.install", "This download needs CEP/UXP or compiled ExtendScript support, which is not available in this build"));
+    }
+    let installer = s.plugin_installer.ok_or_else(|| EngineError::Other("Native plug-in installation is unavailable in this build".into()))?;
+    let loader = s.plugin_loader.ok_or_else(|| EngineError::Other("Effect plug-in loading is unavailable".into()))?;
+    let mut request = p.clone();
+    if matches!(extension.as_deref(), Some("exe" | "msi")) {
+        request["operation"] = json!("vendor_installer");
+    }
+    s.spawn_task("plugins", "Install effect plug-ins", b_p(p, "wait").unwrap_or(false), move |ctl| {
+        let mut report = installer(&request, &|done, total, message| {
+            ctl.message(message);
+            ctl.progress(done, total)
+        })?;
+        if !report.is_object() {
+            return Err("plugin installer returned an invalid report".into());
+        }
+        Ok(Box::new(move |s| {
+            let mut loaded = Vec::new();
+            let mut errors = Vec::new();
+            let mut already_loaded = 0usize;
+            for path in report["profiles"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                let result = s.services.read_file(path).map_err(|e| e.to_string()).and_then(|bytes| {
+                    if path.ends_with(".ecaex.json") || path.ends_with(".ecofx.json") {
+                        let descriptor: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                        if descriptor["manifest"]["id"].as_str().is_some_and(|id| effectcraft_effects::lookup(id).is_some()) {
+                            already_loaded += 1;
+                            return Ok(Value::Null);
+                        }
+                    }
+                    loader(&bytes, path)
+                });
+                match result {
+                    Ok(value) if !value.is_null() => loaded.push(value),
+                    Ok(_) => {}
+                    Err(error) => errors.push(json!({"path":path,"error":error})),
+                }
+            }
+            report["loaded"] = json!(loaded);
+            report["loadErrors"] = json!(errors);
+            report["alreadyLoaded"] = json!(already_loaded);
+            if !report["profiles"].as_array().is_some_and(Vec::is_empty) || !report["toast"].is_string() {
+                report["toast"] = json!(format!(
+                    "Plug-ins: {} loaded, {already_loaded} already loaded, {} issues. Details: Window → Progress.",
+                    loaded.len(),
+                    errors.len() + report["errors"].as_array().map_or(0, Vec::len)
+                ));
+            }
+            Ok(report)
+        }))
+    })
+}
+fn plugins_scan_installed(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut request = Value::Object(p.as_object().ok_or_else(|| bad("effect.plugins.scanInstalled", "parameters must be an object"))?.clone());
+    request["installed"] = json!(true);
+    plugins_install(s, &request)
+}
+fn plugins_library(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut request = Value::Object(p.as_object().ok_or_else(|| bad("effect.plugins.addLibrary", "parameters must be an object"))?.clone());
+    request["operation"] = json!("add_library");
+    plugins_install(s, &request)
+}
+fn plugins_folder(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut request = Value::Object(p.as_object().ok_or_else(|| bad("effect.plugins.folder", "parameters must be an object"))?.clone());
+    request["operation"] = json!("install_folder");
+    plugins_install(s, &request)
+}
+
+fn plugins_preference(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut request = Value::Object(p.as_object().ok_or_else(|| bad("effect.plugins.preference", "parameters must be an object"))?.clone());
+    request["operation"] = json!("edition_preference");
+    let installer = s.plugin_installer.ok_or_else(|| EngineError::Other("Native plug-in preferences are unavailable".into()))?;
+    let report = installer(&request, &|_, _, _| true).map_err(EngineError::Other)?;
+    effectcraft_effects::plugin::prefer_adobe_plugins(report["effectiveEdition"] == "adobe");
+    s.native_plugin_edition = if report["edition"].as_str().is_some() || report["adobeHostDetected"] == false {
+        match report["effectiveEdition"].as_str() {
+            Some("adobe") => Some(crate::NativePluginEdition::Adobe),
+            Some("ofx") => Some(crate::NativePluginEdition::Ofx),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if p.get("edition").is_none() && p["prompt"] != false && (p["first_launch"] != true || report["needsChoice"] == true) {
+        s.events.push(crate::Event::Frontend { command: "effect.plugins.chooseEdition".into(), params: json!({}) });
+    }
+    Ok(report)
 }
 
 fn apply(s: &mut Session, p: &Value) -> Result<Value> {
@@ -678,12 +779,94 @@ pub fn specs() -> Vec<CommandSpec> {
             super::always,
             plugins_load
         ),
+        cmd!(
+            "effect.plugins.install",
+            "Install Plug-in Download...",
+            [],
+            None,
+            "{path: .aex|.ofx|.wasm|.wat|.zip|.exe|.msi|.jsx|.js, wait?: false, dll_dirs?: [absolute folder]} — install a download or discover installed effects; vendor setup completion and rendering compatibility are separate",
+            super::always,
+            plugins_install
+        ),
+        cmd!(
+            "effect.plugins.folder",
+            "Open Plug-in Install Folder",
+            [],
+            None,
+            "{open?:true, wait?:false} — the custom destination for vendor installers and manual packages",
+            super::always,
+            plugins_folder
+        ),
+        cmd!(
+            "effect.plugins.scan",
+            "Scan Plug-in Folder...",
+            [],
+            None,
+            "{folder, wait?: false, dll_dirs?: [absolute folder]} — recursive vendor-neutral plugin discovery; Progress shows per-plugin failures",
+            super::always,
+            plugins_install
+        ),
+        cmd!(
+            "effect.plugins.scanInstalled",
+            "Scan Installed Plug-ins",
+            [],
+            None,
+            "{wait?: false} — scan common Adobe, OFX and private package folders",
+            super::always,
+            plugins_scan_installed
+        ),
+        cmd!(
+            "effect.plugins.addLibrary",
+            "Add Plug-in Library Folder...",
+            [],
+            None,
+            "{folder, wait?: false} — add a vendor's shared-library folder for native loading",
+            super::always,
+            plugins_library
+        ),
+        cmd!(
+            "effect.plugins.preference",
+            "Plug-in Edition Preference...",
+            [],
+            None,
+            "{edition?: adobe|ofx, prompt?:true, first_launch?:false} — remember the preferred edition; explicit ids and existing projects stay unchanged",
+            super::always,
+            plugins_preference
+        ),
     ]
 }
 
 #[cfg(test)]
 mod list_metadata_tests {
     use super::*;
+
+    #[test]
+    fn plugin_installer_rejects_non_object_arguments_without_panicking() {
+        let mut s = Session::default();
+        for command in ["effect.plugins.install", "effect.plugins.scanInstalled", "effect.plugins.addLibrary"] {
+            for value in [json!([]), json!("bad"), json!(1)] {
+                assert!(s.execute(command, value).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn plugin_installation_uses_background_jobs_and_preserves_partial_reports() {
+        let mut s = Session {
+            plugin_loader: Some(|_, _| Ok(json!({}))),
+            plugin_installer: Some(|request, progress| {
+                assert_eq!(request["installed"], true);
+                assert!(progress(1, 2, "Discovering test effects"));
+                Ok(json!({"profiles":[],"errors":[{"path":"original-test.aex","error":"unsupported host suite"}]}))
+            }),
+            ..Default::default()
+        };
+        let report = s.execute("effect.plugins.scanInstalled", json!({"wait":true})).unwrap();
+        assert_eq!(report["errors"][0]["error"], "unsupported host suite");
+        assert_eq!(report["loaded"], json!([]));
+        assert_eq!(s.job_log.last().unwrap().kind, "plugins");
+        assert_eq!(s.job_log.last().unwrap().status, "done");
+    }
 
     #[test]
     fn effect_list_exposes_popup_labels_and_numeric_slider_limits() {

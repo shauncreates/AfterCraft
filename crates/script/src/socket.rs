@@ -41,7 +41,7 @@ mod imp {
         match op {
             "connected" | "eof" => json!({"value": op == "eof"}),
             "close" => json!({}),
-            _ => err("sockets are not available in the web version of EffectCraft"),
+            _ => err("sockets are not available in the web version of AfterCraft"),
         }
     }
 }
@@ -51,6 +51,7 @@ mod imp {
     use std::collections::BTreeMap;
     use std::io::{ErrorKind, Read, Write};
     use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -65,6 +66,7 @@ mod imp {
     /// socket blocked on a slow peer doesn't hold up the others (#1248).
     struct Entry {
         sock: Mutex<Sock>,
+        closed: AtomicBool,
         /// A second handle on a stream, so `close` can shut it down while another call is
         /// blocked reading or writing it.
         wake: Option<TcpStream>,
@@ -85,7 +87,7 @@ mod imp {
             Sock::Stream { s, .. } => s.try_clone().ok(),
             Sock::Listener(_) => None,
         };
-        let entry = Arc::new(Entry { sock: Mutex::new(s), wake });
+        let entry = Arc::new(Entry { sock: Mutex::new(s), closed: AtomicBool::new(false), wake });
         let mut t = table().lock().unwrap_or_else(|e| e.into_inner());
         let id = t.next;
         t.next += 1;
@@ -101,6 +103,9 @@ mod imp {
     /// Forget socket `id`; a call blocked on it fails at once.
     fn close(id: u32) {
         let entry = table().lock().unwrap_or_else(|e| e.into_inner()).socks.remove(&id);
+        if let Some(entry) = &entry {
+            entry.closed.store(true, Ordering::Release);
+        }
         if let Some(w) = entry.as_ref().and_then(|e| e.wake.as_ref()) {
             let _ = w.shutdown(Shutdown::Both);
         }
@@ -108,6 +113,31 @@ mod imp {
 
     fn timeout(p: &J) -> Duration {
         Duration::from_secs_f64(p.get("timeout").and_then(J::as_f64).unwrap_or(10.0).clamp(0.0, 3600.0))
+    }
+
+    // Winsock shutdown does not reliably cancel a blocking send. Nonblocking writes with
+    // a total deadline let close cancel the operation on every platform, without busy-waiting.
+    fn write_data(s: &mut TcpStream, mut data: &[u8], limit: Duration, closed: &AtomicBool) -> std::io::Result<()> {
+        let end = Instant::now() + limit;
+        while !data.is_empty() {
+            if closed.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(ErrorKind::ConnectionAborted, "the socket was closed"));
+            }
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(std::io::Error::new(ErrorKind::TimedOut, "write deadline elapsed"));
+            }
+            match s.write(data) {
+                Ok(0) => return Err(std::io::Error::new(ErrorKind::WriteZero, "the socket stopped accepting data")),
+                Ok(n) => {
+                    data = data.get(n..).ok_or_else(|| std::io::Error::new(ErrorKind::InvalidData, "invalid socket write length"))?;
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == ErrorKind::WouldBlock => std::thread::sleep(left.min(Duration::from_millis(5))),
+                Err(e) => return Err(e),
+            }
+        }
+        s.flush()
     }
 
     /// `host:port` (After Effects' form) → socket addresses.
@@ -265,11 +295,14 @@ mod imp {
                         // A peer that stops reading fills the buffers: give up after `timeout`
                         // instead of blocking the script for good (#1248).
                         let limit = timeout(p).max(Duration::from_millis(1));
-                        if let Err(e) = s.set_write_timeout(Some(limit)) {
-                            return err(format!("cannot set the write timeout: {e}"));
+                        if let Err(e) = s.set_nonblocking(true) {
+                            return err(format!("cannot enable bounded writes: {e}"));
                         }
                         let data = p.get("data").and_then(J::as_str).unwrap_or("");
-                        match s.write_all(&encode(data, utf8)).and_then(|_| s.flush()) {
+                        let result = write_data(s, &encode(data, utf8), limit, &entry.closed);
+                        // Restore the mode for reads and connected/EOF queries, even on failure.
+                        let restored = s.set_nonblocking(false);
+                        match result.and(restored) {
                             Ok(()) => json!({"ok": true}),
                             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => err(format!(
                                 "write timed out after {} s: the other side isn't reading (some of the data may have been sent)",
@@ -288,79 +321,5 @@ mod imp {
 
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
-mod tests {
-    use std::net::{TcpListener, TcpStream};
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-
-    use serde_json::{Value as J, json};
-
-    use super::imp::run;
-
-    /// A loopback peer that accepts one connection and never reads from it; returns its
-    /// `host:port` and the accepted stream's keeper (drop it to let the connection go).
-    fn stalled_peer() -> (String, mpsc::Sender<()>) {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let host = l.local_addr().unwrap().to_string();
-        let (stop, wait) = mpsc::channel::<()>();
-        std::thread::spawn(move || {
-            let (_s, _): (TcpStream, _) = l.accept().unwrap();
-            let _ = wait.recv_timeout(Duration::from_secs(120));
-        });
-        (host, stop)
-    }
-
-    fn open(host: &str) -> u32 {
-        let r = run("open", 0, &json!({"host": host, "timeout": 5}));
-        r["id"].as_u64().unwrap_or_else(|| panic!("open {host}: {r}")) as u32
-    }
-
-    /// More than the loopback buffers hold, so a peer that doesn't read stops the write.
-    fn big() -> String {
-        "x".repeat(64 * 1024 * 1024)
-    }
-
-    /// Run `f` on a thread; its result, or `None` if it takes longer than `limit`.
-    fn within<T: Send + 'static>(limit: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(f());
-        });
-        rx.recv_timeout(limit).ok()
-    }
-
-    #[test]
-    fn a_write_to_a_peer_that_stops_reading_fails_after_the_timeout() {
-        // #1248: it used to block for good.
-        let (host, _keep) = stalled_peer();
-        let id = open(&host);
-        let data = big();
-        let t0 = Instant::now();
-        let r = within(Duration::from_secs(20), move || run("write", id, &json!({"data": data, "timeout": 1}))).expect("the write gave up");
-        assert!(r["error"].as_str().is_some_and(|e| e.contains("timed out")), "{r}");
-        assert!(t0.elapsed() < Duration::from_secs(15), "{:?}", t0.elapsed());
-        run("close", id, &J::Null);
-    }
-
-    #[test]
-    fn a_blocked_socket_doesnt_hold_up_the_others_and_close_interrupts_it() {
-        let (host_a, _keep_a) = stalled_peer();
-        let (host_b, _keep_b) = stalled_peer();
-        let (a, b) = (open(&host_a), open(&host_b));
-        // A write on A that would wait a minute.
-        let data = big();
-        let (tx, blocked) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(run("write", a, &json!({"data": data, "timeout": 60})));
-        });
-        std::thread::sleep(Duration::from_millis(500));
-        // Socket B answers meanwhile (the table isn't locked by A's write).
-        let r = within(Duration::from_secs(3), move || run("connected", b, &json!({}))).expect("socket B answered while A was blocked");
-        assert_eq!(r["value"], true, "{r}");
-        // Closing A returns at once and ends A's write.
-        within(Duration::from_secs(3), move || run("close", a, &J::Null)).expect("close returned while A was blocked");
-        let r = blocked.recv_timeout(Duration::from_secs(5)).expect("A's write ended when A was closed");
-        assert!(r.get("error").is_some(), "{r}");
-        run("close", b, &J::Null);
-    }
-}
+#[path = "socket_tests.rs"]
+mod tests;

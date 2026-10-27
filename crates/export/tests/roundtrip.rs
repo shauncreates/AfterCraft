@@ -1,4 +1,4 @@
-//! Encode a short comp to every output format and decode it back: through EffectCraft's own
+//! Encode a short comp to every output format and decode it back: through AfterCraft's own
 //! media layer (FilmCraft decoders) for MP4/MOV, the `image`/`gif` crates for stills and GIF,
 //! and — when installed — ffprobe as an external oracle (skipped otherwise).
 //!
@@ -614,7 +614,7 @@ fn wav_and_aiff_audio_only() {
     }
 }
 
-/// An AIFF EffectCraft renders imports back (#1428): plain 16-bit and AIFF-C `fl32`.
+/// An AIFF AfterCraft renders imports back (#1428): plain 16-bit and AIFF-C `fl32`.
 #[test]
 fn rendered_aiff_imports_back() {
     use effectcraft_export::render_queue::AudioFormat;

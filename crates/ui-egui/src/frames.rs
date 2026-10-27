@@ -428,6 +428,32 @@ pub fn comp_has_effects(project: &Project, comp: ItemId) -> bool {
     walk(project, comp, 0)
 }
 
+/// Plug-in frame renders retain native worlds/instances outside the RAM-frame cache.
+/// Keep one such frame in flight while its internal CPU work can still run in parallel.
+fn comp_has_plugin_effects(project: &Project, comp: ItemId) -> bool {
+    let mut pending = vec![comp];
+    let mut seen = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(c) = project.comp(id) else { continue };
+        for layer in &c.layers {
+            if layer.switches.effects
+                && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled && effectcraft_engine::effects::plugin::plugin(&g.match_id).is_some()))
+            {
+                return true;
+            }
+            if let LayerSource::Comp { item } = layer.source
+                && !seen.contains(&item)
+            {
+                pending.push(item);
+            }
+        }
+    }
+    false
+}
+
 pub struct Frames {
     cache: Arc<Mutex<Cache>>,
     /// Keys queued or rendering.
@@ -936,7 +962,8 @@ impl Frames {
         }
         q.seq += 1;
         let seq = q.seq;
-        q.jobs.push(Job { key, src: src.clone(), comp, t, opts, urgent, seq, cancel: Arc::default() });
+        let plugin_effects = comp_has_plugin_effects(&src.project, comp);
+        q.jobs.push(Job { key, src: src.clone(), comp, t, opts, urgent, seq, cancel: Arc::default(), plugin_effects });
         drop(inf);
         drop(q);
         #[cfg(not(target_arch = "wasm32"))]
@@ -1140,6 +1167,9 @@ impl Worker {
             let Some(i) = q.best() else { return false };
             let job = q.jobs.swap_remove(i);
             q.running.insert(job.key);
+            if job.plugin_effects {
+                q.plugin_running.insert(job.key);
+            }
             if job.urgent {
                 q.urgent_running += 1;
                 q.urgent_cancels.push((job.key, job.cancel.clone()));
@@ -1199,6 +1229,7 @@ impl Worker {
         }
         if let Ok(mut q) = self.queue.lock() {
             q.running.remove(&key);
+            q.plugin_running.remove(&key);
             if urgent {
                 q.urgent_running = q.urgent_running.saturating_sub(1);
                 if let Some(i) = q.urgent_cancels.iter().position(|(k, _)| *k == key) {
@@ -1323,6 +1354,7 @@ impl Worker {
 }
 
 struct Job {
+    plugin_effects: bool,
     key: FrameKey,
     src: RenderSource,
     comp: ItemId,
@@ -1345,6 +1377,7 @@ impl Job {
 struct Queue {
     jobs: Vec<Job>,
     running: HashSet<FrameKey>,
+    plugin_running: HashSet<FrameKey>,
     urgent_running: usize,
     /// The running viewer (urgent) frames and how to call them off.
     urgent_cancels: Vec<(FrameKey, Arc<AtomicBool>)>,
@@ -1363,6 +1396,7 @@ impl Queue {
         self.jobs
             .iter()
             .enumerate()
+            .filter(|(_, job)| !job.plugin_effects || self.plugin_running.is_empty())
             .max_by_key(|(_, j)| {
                 let near = if j.urgent { None } else { p.and_then(|p| p.ahead(&j.key)) };
                 (j.urgent, near.is_some(), near.map_or(0, |d| -d), if j.urgent { j.seq as i64 } else { -(j.seq as i64) })
@@ -1374,6 +1408,45 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn plugin_frame_budget_queues_extra_frames_and_release_resumes_them() {
+        let mut session = effectcraft_engine::Session::default();
+        session.execute("comp.new", serde_json::json!({"width":16,"height":8})).unwrap();
+        let comp = session.active_comp_id().unwrap();
+        let source = RenderSource {
+            project: session.project.clone(),
+            footage: session.footage.clone(),
+            expr: None,
+            layer_cache: Arc::default(),
+            gpu: None,
+            gpu_display: false,
+            disk: None,
+        };
+        let make = |frame, plugin_effects| Job {
+            key: key(1, frame, 0),
+            src: source.clone(),
+            comp,
+            t: Tick::ZERO,
+            opts: RenderOpts::default(),
+            urgent: plugin_effects,
+            seq: frame as u64,
+            cancel: Arc::default(),
+            plugin_effects,
+        };
+        let active = key(1, 9, 0);
+        let mut queue = Queue::default();
+        queue.plugin_running.insert(active);
+        queue.jobs = vec![make(1, true), make(2, true), make(3, false)];
+        assert_eq!(queue.best(), Some(2), "built-in-only frames remain eligible");
+        queue.jobs.pop();
+        assert_eq!(queue.best(), None, "another plugin frame must wait, not start or fail");
+        let frames = Frames::default();
+        *frames.queue.lock().unwrap() = queue;
+        frames.worker().release(active, false);
+        assert_eq!(frames.queue.lock().unwrap().best(), Some(1), "completion unblocks the newest urgent plugin frame");
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

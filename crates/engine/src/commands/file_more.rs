@@ -90,17 +90,19 @@ fn rate_of(p: &Value) -> FrameRate {
 fn placeholder_footage(p: &Value) -> Footage {
     let w = p.get("width").and_then(Value::as_u64).map_or(1920, limits::size);
     let h = p.get("height").and_then(Value::as_u64).map_or(1080, limits::size);
+    let has_audio = p.get("hasAudio").and_then(Value::as_bool).unwrap_or(false);
+    let has_video = p.get("hasVideo").and_then(Value::as_bool).unwrap_or(true);
     Footage {
         path: String::new(),
-        kind: FootageKind::Video,
+        kind: if has_video { FootageKind::Video } else { FootageKind::Audio },
         width: w,
         height: h,
         pixel_aspect: 1.0,
         frame_rate: rate_of(p),
         native_rate: None,
         duration: Tick::from_seconds_f64(f_p(p, "duration").unwrap_or(30.0)),
-        has_video: true,
-        has_audio: false,
+        has_video,
+        has_audio,
         alpha: AlphaMode::Straight,
         premul_color: [0.0; 3],
         loop_count: 1,
@@ -967,7 +969,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Placeholder...",
             ["File", "Import"],
             None,
-            "{name?, width?, height?, frameRate?, duration? (s)}",
+            "{name?, width?, height?, frameRate?, duration? (s), hasAudio?:false, hasVideo?:true}",
             always,
             import_placeholder
         ),

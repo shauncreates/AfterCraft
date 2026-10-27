@@ -1,0 +1,8 @@
+asset: aftercraft.ico
+title: AfterCraft layer-stack mark
+author: AfterCraft contributors
+source: original work; tools/brand/generate.py
+license: MIT OR Apache-2.0
+license-file: ../../LICENSE-MIT
+added: 2026-10-25 by AfterCraft contributors
+notes: Original geometric layers and play marker; generated without tracing third-party artwork.

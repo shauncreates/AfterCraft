@@ -1,5 +1,10 @@
 # EffectCraft — instructions for agents
 
+This checkout is **AfterCraft**, an independent modified distribution. The upstream
+engineering rules below still apply. Keep AfterCraft's separate application identity,
+configuration folder and Windows installer; do not restore restricted upstream brand artwork.
+The current build and support instructions are in `README.md` and `docs/aftercraft-build.md`.
+
 EffectCraft is a clean-room, open-source, pure-Rust motion graphics and visual effects compositor targeting Adobe After Effects parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../photocraft` (Photoshop), `../pdfcraft` (Acrobat), `../vectorcraft` (Illustrator), `../filmcraft` (Premiere), `../lightcraft` (Lightroom) and `../designcraft` (InDesign), with the same conventions.
 
 ## Start every session here
@@ -19,7 +24,7 @@ EffectCraft is a clean-room, open-source, pure-Rust motion graphics and visual e
 - **Property tree:** everything animatable is a `Property` in the layer's `PropGroup` tree, addressed by paths (`transform/position`, `effects/#1/blurriness`, `@uid`).
 - **Everything is a command** (`crates/engine`): id, label, menu path, shortcut, params, enabled(), run(). UI, CLI, control channel and MCP dispatch by id.
 - **Everything is agent-drivable:** every interactive widget registers an automation id; UI state is serde.
-- **Community links** (Help menu, About, header Discord button): https://discord.gg/artcraft, https://getartcraft.com, https://getartcraft.com/apps/effectcraft, https://github.com/storytold/effectcraft.
+- **Community links** (Help menu, About, header): AfterCraft's repository, Issues and Discussions at https://github.com/shauncreates/AfterCraft. Keep upstream attribution separate from application support links.
 - **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, wasm).
 - **Commits:** one task id per commit (`M6.3: trim paths`). Only green states.
 

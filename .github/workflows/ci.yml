@@ -1,0 +1,51 @@
+name: AfterCraft checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_RELEASE_DEBUG: 0
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: 1
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+      # Headless UI tests create WARP contexts; run them serially on Windows.
+      # Concurrency regressions still spawn their own threads inside each test.
+      RUST_TEST_THREADS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Core quality gates
+        run: cargo xtask ci
+      - name: Adobe ABI helper fixtures
+        shell: pwsh
+        run: ./native/native-host/verify.ps1
+      - name: OFX helper tests
+        shell: pwsh
+        run: ./native/ofx-helper/build.ps1 -Action test
+      - name: OFX helper Clippy
+        shell: pwsh
+        run: ./native/ofx-helper/build.ps1 -Action clippy
+      - name: Core native adapter fixtures
+        shell: pwsh
+        run: |
+          $env:EFFECTCRAFT_AEX_TEST_WORKER = Join-Path $PWD 'native/native-host/target/debug/effectcraft-aex-probe.exe'
+          $env:EFFECTCRAFT_AEX_TEST_PLUGIN = Join-Path $PWD 'native/native-host/dist/gain-fixture.aex'
+          $env:EFFECTCRAFT_OFX_TEST_WORKER = Join-Path $PWD 'native/ofx-helper/target/debug/effectcraft-helper-ofx.exe'
+          $env:EFFECTCRAFT_OFX_TEST_BUNDLE = Join-Path $PWD 'native/ofx-helper/target/fixtures/ec-test-ofx.ofx.bundle'
+          cargo test --locked -p effectcraft-plugin --features wasm,native-aex --release -- --include-ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p effectcraft-host --test native_aex --release -- --include-ignored
+      - name: Converter fixtures
+        run: python -m unittest discover -s tools/aep-import -p test_converter.py

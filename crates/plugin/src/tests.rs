@@ -251,7 +251,7 @@ fn manifest_parameter_schemas_are_validated() {
         let e = load_err(load_wasm(m.as_bytes(), "schema.wat"));
         assert!(e.contains(want), "{params}: {e}");
     }
-    let many: Vec<String> = (0..300).map(|i| format!(r#"{{"id":"c{i}","name":"C","type":"checkbox"}}"#)).collect();
+    let many: Vec<String> = (0..1100).map(|i| format!(r#"{{"id":"c{i}","name":"C","type":"checkbox"}}"#)).collect();
     let e = load_err(load_wasm(module_with(&p(&many.join(",")), "").as_bytes(), "many.wat"));
     assert!(e.contains("at most"), "{e}");
     // Missing name, another API in the manifest.

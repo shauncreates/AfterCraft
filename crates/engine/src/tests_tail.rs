@@ -283,6 +283,12 @@ fn tate_chu_yoko_via_set_text_with_undo_and_serde() {
     assert!(crate::commands::text_edit::layer_doc(&s, LayerId(t)).unwrap().vertical_roman_upright);
 }
 
+fn variable_font_fixture() -> (effectcraft_text::fonts::FaceId, Vec<effectcraft_text::variable::FontAxis>) {
+    static FACE: std::sync::OnceLock<effectcraft_text::fonts::FaceId> = std::sync::OnceLock::new();
+    let face = *FACE.get_or_init(|| effectcraft_text::fonts::add_font_data(include_bytes!("../../../assets/fonts/AfterCraftVariableFixture.ttf").to_vec())[0]);
+    (face, effectcraft_text::variable::font_axes(face))
+}
+
 #[test]
 fn variable_font_axes_animator() {
     let mut s = comp(400, 200);
@@ -292,18 +298,14 @@ fn variable_font_axes_animator() {
     // Inter (bundled) is static.
     assert_eq!(s.execute("text.animatorFontAxes", json!({})).unwrap()["axes"], json!([]));
     assert!(s.execute("text.animatorFontAxes", json!({"axis": "wght"})).is_err());
-    let Some((face, axes)) = effectcraft_text::variable::find_variable_face() else {
-        eprintln!("no variable font installed: animation check skipped");
-        return;
-    };
+    let (face, axes) = variable_font_fixture();
     let info = effectcraft_text::fonts::face(face).info.clone();
-    s.execute("layer.setText", json!({"layer": t, "font": info.family, "style": info.style})).unwrap();
+    // Apply offsets from explicit design defaults, independently of named-instance values.
+    let defaults: serde_json::Map<String, serde_json::Value> = axes.iter().map(|a| (a.tag.clone(), json!(a.default))).collect();
+    s.execute("layer.setText", json!({"layer": t, "font": info.family, "style": info.style, "variations": defaults})).unwrap();
     let axis = axes.iter().find(|a| a.max > a.min).unwrap().clone();
     let listed = s.execute("text.animatorFontAxes", json!({})).unwrap();
-    if listed["axes"].as_array().is_none_or(|a| a.is_empty()) {
-        eprintln!("the variable face isn't reachable by family/style: skipped");
-        return;
-    }
+    assert!(listed["axes"].as_array().is_some_and(|a| !a.is_empty()), "{listed}");
     let tag = axis.tag.clone();
     let r = s.execute("text.animatorFontAxes", json!({"axis": tag})).unwrap();
     let anim = r["animator"].as_u64().unwrap();
@@ -362,15 +364,9 @@ fn variable_font_axes_in_the_character_style() {
     s.execute("edit.undo", json!({})).unwrap();
     assert!(crate::commands::text_edit::layer_doc(&s, LayerId(t)).unwrap().style_at(0).variations.is_empty());
     assert!(s.execute("layer.setText", json!({"layer": t, "variations": 3})).is_err());
-    let Some((face, axes)) = effectcraft_text::variable::find_variable_face() else {
-        eprintln!("no variable font installed: rendering check skipped");
-        return;
-    };
+    let (face, axes) = variable_font_fixture();
     let info = effectcraft_text::fonts::face(face).info.clone();
-    if effectcraft_text::resolve(&info.family, &info.style).face != face {
-        eprintln!("variable face not reachable by family/style: skipped");
-        return;
-    }
+    assert_eq!(effectcraft_text::resolve(&info.family, &info.style).face, face);
     s.execute("layer.setText", json!({"layer": t, "font": info.family, "style": info.style})).unwrap();
     let a = axes.iter().find(|a| a.tag == "wght" && a.max > a.min).or_else(|| axes.iter().find(|a| a.max > a.min)).unwrap().clone();
     let geom = |s: &Session| {

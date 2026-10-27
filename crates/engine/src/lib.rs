@@ -1,4 +1,4 @@
-//! The EffectCraft engine façade.
+//! The AfterCraft engine façade.
 //!
 //! Every user-visible action is a command with a stable id (`layer.newSolid`, `prop.set`,
 //! `keys.easyEase`…) and JSON parameters, dispatched through [`Session::execute`]. The egui UI,
@@ -390,6 +390,13 @@ pub enum Event {
     },
 }
 
+/// The native edition displayed in Effects & Presets after loading the host preference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativePluginEdition {
+    Adobe,
+    Ofx,
+}
+
 pub struct Session {
     pub project: Arc<Project>,
     pub history: History,
@@ -478,6 +485,14 @@ pub struct Session {
     /// Loads WebAssembly effect plug-ins (set by the host that links `effectcraft-plugin` with
     /// its runtime): `effect.plugins.load`.
     pub plugin_loader: Option<PluginLoader>,
+    /// Host-owned native effect discovery/installation; progress can cancel the operation.
+    pub plugin_installer: Option<PluginInstaller>,
+    /// None until an edition is chosen; a machine without AE uses OFX automatically.
+    /// This filters discovery UI only, never the registry or existing project effects.
+    pub native_plugin_edition: Option<NativePluginEdition>,
+    /// Imports an AE project in an isolated host session; the command merges the returned
+    /// project only after conversion succeeds. None on hosts without the importer.
+    pub aep_importer: Option<AepImporter>,
     /// ScriptUI windows and panels opened by scripts (see [`scriptui`]).
     pub script_ui: scriptui::ScriptUi,
     /// The last physical-memory reading (Settings ▸ Memory & CPU budgets); `None` = unknown
@@ -552,6 +567,12 @@ pub type ScriptRunner = fn(&mut Session, &ScriptRequest) -> Value;
 /// describes it (`{id, name, category, version, api, params}`).
 pub type PluginLoader = fn(&[u8], &str) -> std::result::Result<Value, String>;
 
+/// Host installer: request plus cancellable (done, total, message) progress callback.
+pub type PluginInstaller = fn(&Value, &dyn Fn(u64, u64, &str) -> bool) -> std::result::Result<Value, String>;
+
+/// Native host AE importer: source path, options, then a staged project and fidelity report.
+pub type AepImporter = fn(&str, &Value) -> std::result::Result<(Project, Value), String>;
+
 impl Default for Session {
     fn default() -> Self {
         let project = Arc::new(Project::default());
@@ -600,6 +621,9 @@ impl Default for Session {
             snapshot: None,
             script: None,
             plugin_loader: None,
+            plugin_installer: None,
+            native_plugin_edition: None,
+            aep_importer: None,
             script_ui: scriptui::ScriptUi::default(),
             sys_memory: None,
             key_move: None,
