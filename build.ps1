@@ -13,7 +13,7 @@ if(!$env:CARGO_PROFILE_DEV_DEBUG) {$env:CARGO_PROFILE_DEV_DEBUG='0'}
 . (Join-Path $PSScriptRoot 'tools\windows-toolchain.ps1')
 $cargo=Initialize-AfterCraftToolchain
 $profile=if($Configuration -eq 'Release') {'release'} else {'debug'}
-$flags=if($Configuration -eq 'Release') {@('--release')} else {@()}
+[string[]]$flags=if($Configuration -eq 'Release') {@('--release')} else {@()}
 $coreTarget=if($env:CARGO_TARGET_DIR) {[IO.Path]::GetFullPath($env:CARGO_TARGET_DIR)} else {Join-Path $PSScriptRoot 'target'}
 New-Item -ItemType Directory -Force -Path $Output | Out-Null
 Push-Location $PSScriptRoot
@@ -51,7 +51,7 @@ try {
     & $Python (Join-Path $PSScriptRoot 'tools/collect-licenses.py') (Join-Path $licenses 'rust-dependencies')
     if($LASTEXITCODE -ne 0) {throw 'Dependency license collection failed'}
     if($RceditPath) {
-        & $RceditPath (Join-Path $Output 'AfterCraft.exe') --set-icon (Join-Path $PSScriptRoot 'assets\aftercraft\aftercraft.ico') --set-version-string ProductName AfterCraft --set-version-string FileDescription 'AfterCraft motion graphics and VFX' --set-version-string OriginalFilename AfterCraft.exe --set-file-version 0.16.0.1 --set-product-version 0.16.0.1
+        & $RceditPath (Join-Path $Output 'AfterCraft.exe') --set-icon (Join-Path $PSScriptRoot 'assets\aftercraft\aftercraft.ico') --set-version-string ProductName AfterCraft --set-version-string FileDescription 'AfterCraft motion graphics and VFX' --set-version-string OriginalFilename AfterCraft.exe --set-file-version 0.16.0.2 --set-product-version 0.16.0.2
         if($LASTEXITCODE -ne 0) {throw 'AfterCraft executable resources failed'}
     }
     Get-ChildItem -LiteralPath $Output -File -Filter '*.exe' | ForEach-Object {

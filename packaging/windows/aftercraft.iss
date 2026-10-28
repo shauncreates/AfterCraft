@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.16.0.1"
+  #define AppVersion "0.16.0.2"
 #endif
 #ifndef Payload
   #define Payload "..\..\artifacts\AfterCraft"
@@ -24,7 +24,7 @@ DisableProgramGroupPage=yes
 DisableDirPage=no
 LicenseFile=..\..\LICENSE-MIT
 OutputDir=..\..\artifacts\installers
-OutputBaseFilename=AfterCraft-0.16.0-preview.1-windows-x64-Setup
+OutputBaseFilename=AfterCraft-0.16.0-preview.2-windows-x64-Setup
 SetupIconFile=..\..\assets\aftercraft\aftercraft.ico
 UninstallDisplayIcon={app}\AfterCraft.exe
 Compression=lzma2

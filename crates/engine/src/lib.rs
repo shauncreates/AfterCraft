@@ -500,6 +500,8 @@ pub struct Session {
     pub sys_memory: Option<sysinfo::SysMemory>,
     /// The keyframe drag in progress (`keys.move` with a merge key).
     pub key_move: Option<KeyMove>,
+    /// A bounded Current physics gesture. Weak project identity prevents stale live edits.
+    pub current_physics: Option<commands::current::PhysicsGesture>,
     /// Reads the system's memory in the background for [`Session::memory_tick`].
     pub memory_watch: sysinfo::MemoryWatch,
     /// Switches Affect Nested Comps as last applied (a change empties the layer cache).
@@ -627,6 +629,7 @@ impl Default for Session {
             script_ui: scriptui::ScriptUi::default(),
             sys_memory: None,
             key_move: None,
+            current_physics: None,
             memory_watch: Default::default(),
             applied_nested_switches: None,
             offload: None,

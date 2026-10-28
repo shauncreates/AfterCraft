@@ -1,6 +1,7 @@
 //! Bounded external AE parser and a separate, non-rendering scripting session. Native
 //! plug-ins are registered from their descriptors; importing never renders their code.
 
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -85,6 +86,19 @@ fn param_type(ui: &ParamUi) -> &'static str {
     }
 }
 
+fn enrich_catalog_profile(profile: &mut Value, warned: &mut BTreeSet<(String, String)>, warnings: &mut Vec<String>) {
+    if let Err(error) = effectcraft_plugin::enrich_native_profile(profile) {
+        let path = |field: &str| profile[field].as_str().filter(|s| s.len() <= 4096).unwrap_or("<unavailable>").to_string();
+        let key = (path("state_dir"), path("plugin"));
+        if warned.insert(key.clone()) {
+            warnings.push(format!(
+                "Optional OFX parameter-unit/GPU metadata is unavailable for {}: {error}. Use Effect > Scan Installed Plug-ins before importing to refresh it.",
+                key.1
+            ));
+        }
+    }
+}
+
 fn catalog(path: &Path, options: &Value) -> Result<Vec<String>, String> {
     let file = File::create(path).map_err(|e| e.to_string())?;
     let mut out = BoundedWriter { inner: std::io::BufWriter::new(file), left: MAX_REPORT };
@@ -110,6 +124,7 @@ fn catalog(path: &Path, options: &Value) -> Result<Vec<String>, String> {
     }
     out.write_all(b"],\"nativeProfiles\":[").map_err(|e| e.to_string())?;
     let mut warnings = Vec::new();
+    let mut metadata_warnings = BTreeSet::new();
     let mut profiles = Vec::new();
     if let Some(folder) = crate::config_dir().map(|d| d.join("Plug-ins")).filter(|p| p.is_dir()) {
         for entry in fs::read_dir(folder).map_err(|e| e.to_string())?.take(4096) {
@@ -125,7 +140,8 @@ fn catalog(path: &Path, options: &Value) -> Result<Vec<String>, String> {
     for path in profiles {
         let profile = read_limited(&path, 8 * 1024 * 1024).and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| e.to_string()));
         match profile {
-            Ok(value) => {
+            Ok(mut value) => {
+                enrich_catalog_profile(&mut value, &mut metadata_warnings, &mut warnings);
                 if written > 0 {
                     out.write_all(b",").map_err(|e| e.to_string())?;
                 }
@@ -289,4 +305,61 @@ pub fn import(path: &str, options: &Value) -> Result<(Project, Value), String> {
     let project = (*staged.project).clone();
     let _directory = job.keep();
     Ok((project, report))
+}
+
+#[cfg(all(test, windows))]
+mod metadata_tests {
+    use super::*;
+
+    fn profile(state: &Path, plugin: &Path, id: &str) -> Value {
+        json!({"experimental_ofx":true,"state_dir":state,"plugin":plugin,
+            "manifest":{"id":format!("ofx.{id}")},"remote":{"manifest":{"id":id,"params":[]}}})
+    }
+
+    #[test]
+    fn unavailable_metadata_warns_once_per_bundle_and_state_with_rescan_advice() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_state = dir.path().join("state");
+        let other_state = dir.path().join("other-state");
+        fs::create_dir_all(&first_state).unwrap();
+        fs::create_dir_all(&other_state).unwrap();
+        let bundle = dir.path().join("bundle.ofx");
+        let mut warned = BTreeSet::new();
+        let mut warnings = Vec::new();
+        for id in ["org.test.first", "org.test.second"] {
+            let mut value = profile(&first_state, &bundle, id);
+            let original = value.clone();
+            enrich_catalog_profile(&mut value, &mut warned, &mut warnings);
+            assert_eq!(value, original);
+        }
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("Effect > Scan Installed Plug-ins"));
+        enrich_catalog_profile(&mut profile(&first_state, &dir.path().join("other.ofx"), "org.test.first"), &mut warned, &mut warnings);
+        enrich_catalog_profile(&mut profile(&other_state, &bundle, "org.test.first"), &mut warned, &mut warnings);
+        assert_eq!(warnings.len(), 3, "different states and bundles need their own warnings");
+        enrich_catalog_profile(&mut json!({"experimental_native":true,"match_name":"Original fixture"}), &mut warned, &mut warnings);
+        assert_eq!(warnings.len(), 3, "Adobe registrations do not need an OFX descriptor cache");
+    }
+
+    #[test]
+    fn catalog_enrichment_reads_only_existing_cache_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("ofx-descriptors");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(
+            cache.join("org.test.catalog.json"),
+            serde_json::to_vec(&json!({
+                "id":"org.test.catalog","parameterSemantics":{},"openGL":"true","hostGpu":{"available":true,"backend":"opengl"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut value = profile(dir.path(), &dir.path().join("not-executed.ofx"), "org.test.catalog");
+        let mut warnings = Vec::new();
+        enrich_catalog_profile(&mut value, &mut BTreeSet::new(), &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(value["parameterSemantics"], json!({}));
+        assert_eq!(value["gpu"]["host"]["available"], true);
+        assert!(!dir.path().join("not-executed.ofx").exists(), "a catalog read does not require or execute a vendor binary");
+    }
 }

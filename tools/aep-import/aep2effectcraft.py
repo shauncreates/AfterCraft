@@ -15,6 +15,9 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import builtin_maps
+
 MAX_SOURCE = 64 * 1024 * 1024
 MAX_SCRIPT = 32 * 1024 * 1024
 MAX_REPORT = 64 * 1024 * 1024
@@ -187,6 +190,8 @@ class Catalog:
             manifest = profile.get("manifest", {})
             effect = self.effects.get(manifest.get("id"))
             if effect:
+                effect["parameterSemantics"] = profile.get("parameterSemantics", {})
+                effect["adobeParameterMatchNames"] = profile.get("parameter_match_names", {})
                 typed = {p.get("id"): p for p in manifest.get("params", []) if isinstance(p, dict)}
                 for param in effect.get("params", []):
                     if param.get("id") in typed:
@@ -195,6 +200,11 @@ class Catalog:
 
     def effect(self, source):
         mn = source.match_name
+        # Known original built-ins are stable host implementations, independent of
+        # a user's commercial-plugin edition preference (notably Keylight 906).
+        target = self.builtin.get(mn)
+        if target in self.effects:
+            return self.effects[target]
         native = [p["manifest"]["id"] for p in self.profiles if p.get("match_name") == mn and isinstance(p.get("manifest"), dict)]
         adobe = [self.effects[i] for i in native if i in self.effects]
         ofx = [e for e in self.effects.values() if e["id"].startswith("ofx.com.genarts.sapphire.")
@@ -202,26 +212,44 @@ class Catalog:
         for candidates in ([adobe, ofx] if self.preferred == "adobe" else [ofx, adobe]):
             if len(candidates) == 1:
                 return candidates[0]
-        target = self.builtin.get(mn)
-        if target in self.effects:
-            return self.effects[target]
         # Catalogs may explicitly declare a vendor/edition equivalence; never guess one from a label.
         explicit = [e for e in self.effects.values() if mn in e.get("adobeMatchNames", [])]
         return explicit[0] if len(explicit) == 1 else None
 
-    def parameter(self, source_fx, source_prop, target_fx):
+    def parameter(self, source_fx, source_prop, target_fx, dimensions=None):
         params = target_fx.get("params", [])
         if not isinstance(params, list) or len(params) > 2048:
             raise ConversionError("invalid parameter catalog")
-        if source_fx.match_name == "ADBE Exposure2":
+        is_builtin = target_fx["id"].startswith("ec.")
+        stable = target_fx.get("adobeParameterMatchNames", {})
+        if is_builtin and (target := builtin_maps.parameter_id(source_fx.match_name, source_prop.match_name)):
+            found = [p for p in params if p.get("id") == target]
+        elif source_fx.match_name == "ADBE Exposure2":
             target = EXPOSURE.get(source_prop.match_name)
             found = [p for p in params if p.get("id") == target]
+        elif isinstance(stable, dict) and source_prop.match_name in stable.values():
+            found = [p for p in params if stable.get(p.get("id")) == source_prop.match_name]
         elif source_fx.match_name.startswith("S_Wipe") and norm(source_prop.name) == "wipepercent" and target_fx["id"].startswith("ofx.com.genarts.sapphire."):
             # Sapphire names the same transition ratio Wipe Percent in AE and Wipe Amount
             # in OFX. AE stores 0..100; OFX documents a normal transition as 0..1.
             found = [p for p in params if p.get("id") == "Wipe_Amount"]
         else:
             found = [p for p in params if norm(p.get("name", "")) == norm(source_prop.name)]
+        if not found and source_fx.match_name.startswith("S_") and dimensions:
+            # Legacy normalized 2-D OFX controls are exposed as two scalar slots.
+            # Preserve static/non-spatial source points instead of silently losing
+            # the center because the AE label ends in "XY".
+            name = norm(source_prop.name).removesuffix("xy")
+            pairs = [[p for p in params if norm(p.get("name", "")) == name + axis] for axis in ("x", "y")]
+            if all(len(pair) == 1 for pair in pairs):
+                targets = [pair[0] for pair in pairs]
+                semantics = target_fx.get("parameterSemantics", {})
+                if all(semantics.get(p["id"], {}).get("doubleType") == "OfxParamDoubleTypeNormalisedXYAbsolute" for p in targets):
+                    if get(source_prop, "is_spatial", False) and get(source_prop, "keyframes", []):
+                        return None, "animated spatial point needs a spatial-curve translation", 1.0
+                    if all(finite(v) and v > 0 for v in dimensions):
+                        mapped = dict(targets[0], splitTargets=targets)
+                        return mapped, "AE point pixels to normalized OFX XY (inverted Y origin)", 1.0
         if len(found) != 1:
             return None, "no unique target parameter", 1.0
         target = found[0]
@@ -233,20 +261,36 @@ class Catalog:
                 options = [x.get("label", "") if isinstance(x, dict) else x for x in options]
             # Built-in params with explicit paths have documented schema but may use abbreviated labels.
             if source_fx.match_name != "ADBE Exposure2" and (not menu or not options or [norm(x) for x in menu] != [norm(x) for x in options]):
-                return None, "popup option correspondence unverified", 1.0
+                values = [get(source_prop, "value")] + [get(k, "value") for k in get(source_prop, "keyframes", []) or []]
+                if not values or any(builtin_maps.remap_enum(value, menu, options) is None for value in values):
+                    return None, "selected popup option correspondence unverified", 1.0
+                return dict(target, enumSource=menu, enumTarget=options), "popup selected choices reindexed by unique label", 1.0
             return target, "one-based scripting popup with verified options", 1.0
         if kind in ("checkbox", "bool", "color", "point", "point2", "vec2", "angle"):
             return target, "SDK boolean/color/point/angle semantics", 1.0
         is_adobe = target_fx.get("name", "").endswith(" [Adobe]")
-        is_builtin = target_fx["id"].startswith("ec.")
         if is_adobe or is_builtin:
-            return target, "same-format property identity", 1.0
+            scale = builtin_maps.scalar_scale(source_fx.match_name, source_prop.match_name, get(source_prop, "min_value"), get(source_prop, "max_value")) if is_builtin else 1.0
+            offset = builtin_maps.scalar_offset(source_fx.match_name, source_prop.match_name, get(source_prop, "min_value"), get(source_prop, "max_value")) if is_builtin else 0.0
+            if scale is None or offset is None:
+                return None, "stored built-in scalar encoding is unverified", 1.0
+            return dict(target, valueOffset=offset), "stable property identity and verified stored units", scale
         if source_fx.match_name.startswith("S_"):
             name = norm(source_prop.name)
             if name == "wipepercent" and get(source_prop, "max_value") == 100 and target.get("max", 1) >= 1:
                 return target, "Sapphire wipe percent /100; ease speeds scaled /100", 0.01
             if name in SAPPHIRE_UNITLESS:
                 return target, "Sapphire dimensionless/frame/Hz control", 1.0
+            semantics = target_fx.get("parameterSemantics", {}).get(target["id"], {})
+            double_type = semantics.get("doubleType")
+            if double_type in ("OfxParamDoubleTypeNormalisedX", "OfxParamDoubleTypeNormalisedY"):
+                axis = 0 if double_type.endswith("X") else 1
+                size = dimensions[axis] if dimensions and len(dimensions) == 2 else None
+                if finite(size) and size > 0:
+                    return target, "AE pixels / source layer dimension for normalized OFX spatial value", 1.0 / size
+                return None, "normalized OFX distance requires source layer dimensions", 1.0
+            if double_type in ("OfxParamDoubleTypePlain", "OfxParamDoubleTypeScale", "OfxParamDoubleTypeAngle"):
+                return target, "same-vendor semantic identity with declared OFX scalar type", 1.0
         return None, "scalar units not verified across host editions", 1.0
 
 
@@ -258,6 +302,7 @@ def make_converter(base):
             self.mapping = []
             self.output_bytes = 0
             self.walk_nodes = 0
+            self.layer_dimensions = None
 
         def emit(self, line, depth=0):
             if depth > MAX_DEPTH:
@@ -293,6 +338,9 @@ def make_converter(base):
             self.walk_nodes += 1
             if self.walk_nodes > MAX_NODES or depth > MAX_DEPTH:
                 raise ConversionError("conversion property tree exceeds limits")
+            if get(group, "containing_comp") is not None:
+                source = get(group, "source")
+                self.layer_dimensions = (get(group, "width", get(source, "width")), get(group, "height", get(source, "height")))
             if group.match_name != "ADBE Effect Parade":
                 return super().walk(group, ref, ctx, depth)
             for effect in group.properties:
@@ -311,6 +359,11 @@ def make_converter(base):
                 if get(effect, "enabled", True) is False:
                     self.step("disable " + effect.name, "%s.enabled=false;" % gv, depth + 1)
                 self.effect_leaves(effect, effect, gv, target, record, ctx + " > " + effect.name, depth + 1)
+                missing = [p for p in record["parameters"] if p["targetId"] is None]
+                record["coverage"] = {"mapped": len(record["parameters"]) - len(missing), "unmapped": len(missing),
+                    "unmappedChanged": sum(p["sourceChanged"] for p in missing)}
+                if missing:
+                    record["status"] = "partial"
                 self.emit("}", depth)
 
         def effect_leaves(self, effect, group, ref, target, record, ctx, depth):
@@ -323,17 +376,29 @@ def make_converter(base):
                     continue
                 if get(prop, "property_value_type") in base.NO_VALUE_TYPES:
                     continue
-                mapped, why, scale = self.catalog.parameter(effect, prop, target)
+                mapped, why, scale = self.catalog.parameter(effect, prop, target, self.layer_dimensions)
                 audit = {"sourceMatchName": prop.match_name, "sourceName": prop.name,
                          "targetId": mapped["id"] if mapped else None, "scale": scale, "reason": why,
                          "sourceChanged": used(prop)}
+                if mapped and mapped.get("valueOffset"):
+                    audit["offset"] = mapped["valueOffset"]
                 record["parameters"].append(audit)
                 if mapped is None:
                     if used(prop):
                         self.notes.append("%s > %s: %s; source values/keys retained in report" % (ctx, prop.name, why))
                     continue
-                proxy = ScaledProperty(prop, scale) if scale != 1.0 else prop
-                self.leaf(proxy, "QP(%s,%s)" % (ref, js(mapped["id"])), ctx, depth, force=True)
+                if "splitTargets" in mapped:
+                    for component, part in enumerate(mapped["splitTargets"]):
+                        factor = (1 if component == 0 else -1) / self.layer_dimensions[component]
+                        proxy = ComponentProperty(prop, component, factor, 0 if component == 0 else 1, base.PropertyValueType.OneD)
+                        self.leaf(proxy, "QP(%s,%s)" % (ref, js(part["id"])), ctx, depth, force=True)
+                    audit["targetIds"] = [p["id"] for p in mapped["splitTargets"]]
+                else:
+                    offset = mapped.get("valueOffset", 0.0)
+                    proxy = EnumProperty(prop, mapped["enumSource"], mapped["enumTarget"]) if "enumSource" in mapped else ScaledProperty(prop, scale, offset) if scale != 1.0 or offset != 0.0 else prop
+                    if proxy is not prop and get(prop, "expression", ""):
+                        self.notes.append("%s > %s: converted values/keys; source expression requires unit/identity translation and remains in the report" % (ctx, prop.name))
+                    self.leaf(proxy, "QP(%s,%s)" % (ref, js(mapped["id"])), ctx, depth, force=True)
 
         def run(self, title):
             # This title also appears in a generated line comment in the base converter.
@@ -349,18 +414,19 @@ def make_converter(base):
 
 class ScaledEase:
     def __init__(self, source, scale):
-        self.speed = source.speed * abs(scale)
+        self.speed = source.speed * scale
         self.influence = source.influence
 
 
 class ScaledKey:
-    def __init__(self, source, scale):
+    def __init__(self, source, scale, offset=0.0):
         self.source = source
         self.scale = scale
+        self.offset = offset
     def __getattr__(self, name):
         value = getattr(self.source, name)
         if name == "value":
-            return scale_value(value, self.scale)
+            return mapped_value(value, self.scale, self.offset)
         if name in ("in_temporal_ease", "out_temporal_ease"):
             return [ScaledEase(e, self.scale) for e in value] if value else value
         return value
@@ -374,16 +440,97 @@ def scale_value(value, scale):
     return value * scale
 
 
+def mapped_value(value, scale, offset):
+    if not finite(offset):
+        raise ConversionError("invalid mapped scalar offset")
+    if isinstance(value, (list, tuple)):
+        return [mapped_value(v, scale, offset) for v in value]
+    return scale_value(value, scale) + offset
+
+
 class ScaledProperty:
-    def __init__(self, source, scale):
+    def __init__(self, source, scale, offset=0.0):
         self.source = source
         self.scale = scale
+        self.offset = offset
+    def __getattr__(self, name):
+        if name == "expression":
+            return ""
+        value = getattr(self.source, name)
+        if name == "value":
+            return mapped_value(value, self.scale, self.offset)
+        if name == "keyframes":
+            return [ScaledKey(k, self.scale, self.offset) for k in value]
+        return value
+
+
+class MappedKey:
+    def __init__(self, source, mapper, component=None, scale=1.0):
+        self.source, self.mapper, self.component, self.scale = source, mapper, component, scale
+
     def __getattr__(self, name):
         value = getattr(self.source, name)
         if name == "value":
-            return scale_value(value, self.scale)
+            return self.mapper(value)
+        if self.component is not None:
+            if name in ("in_spatial_tangent", "out_spatial_tangent"):
+                return None
+            if name in ("spatial_auto_bezier", "spatial_continuous", "roving"):
+                return False
+            if name in ("in_temporal_ease", "out_temporal_ease"):
+                if not value:
+                    return value
+                ease = value[min(self.component, len(value) - 1)]
+                return [MappedEase(ease, self.scale)]
+        return value
+
+
+class MappedEase:
+    def __init__(self, source, scale):
+        self.speed, self.influence = source.speed * scale, source.influence
+
+
+class EnumProperty:
+    def __init__(self, source, source_options, target_options):
+        self.source, self.source_options, self.target_options = source, source_options, target_options
+
+    def mapped(self, value):
+        mapped = builtin_maps.remap_enum(value, self.source_options, self.target_options)
+        if mapped is None:
+            raise ConversionError("unverified selected enum choice")
+        return mapped
+
+    def __getattr__(self, name):
+        if name == "expression":
+            return ""
+        value = getattr(self.source, name)
+        if name == "value":
+            return self.mapped(value)
         if name == "keyframes":
-            return [ScaledKey(k, self.scale) for k in value]
+            return [MappedKey(k, self.mapped) for k in value]
+        return value
+
+
+class ComponentProperty:
+    def __init__(self, source, component, scale, offset, value_type):
+        self.source, self.component, self.scale, self.offset = source, component, scale, offset
+        self.property_value_type = value_type
+
+    def mapped(self, value):
+        if not isinstance(value, (list, tuple)) or len(value) != 2 or not all(finite(v) for v in value):
+            raise ConversionError("invalid mapped point")
+        return value[self.component] * self.scale + self.offset
+
+    def __getattr__(self, name):
+        if name == "expression":
+            return ""
+        if name in ("is_spatial", "is_separation_leader", "is_separation_follower", "dimensions_separated"):
+            return False
+        value = getattr(self.source, name)
+        if name == "value":
+            return self.mapped(value)
+        if name == "keyframes":
+            return [MappedKey(k, self.mapped, self.component, self.scale) for k in value]
         return value
 
 

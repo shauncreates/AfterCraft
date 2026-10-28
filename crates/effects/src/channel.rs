@@ -89,9 +89,26 @@ const COMBINER_FROM: [&str; 14] = [
     "Max RGB",
     "Min RGB",
 ];
-/// Channel Combiner's To options (a single value goes into one channel).
-const COMBINER_TO: [&str; 9] =
-    ["Red Only", "Green Only", "Blue Only", "Alpha Only", "Lightness Only", "Hue Only", "Saturation Only", "Grayscale", "Saturation Multiplied"];
+/// Channel Combiner's To options. Keep the original nine indices for saved projects;
+/// appended choices replace a channel while retaining the other input channels.
+const COMBINER_TO: [&str; 16] = [
+    "Red Only",
+    "Green Only",
+    "Blue Only",
+    "Alpha Only",
+    "Lightness Only",
+    "Hue Only",
+    "Saturation Only",
+    "Grayscale",
+    "Saturation Multiplied",
+    "Red",
+    "Green",
+    "Blue",
+    "Alpha",
+    "Lightness",
+    "Hue",
+    "Saturation",
+];
 
 fn channel_combiner(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let from = ctx.params.e("from");
@@ -166,6 +183,24 @@ fn channel_combiner(ctx: &EffectCtx, mut b: Buf) -> Buf {
                     8 => {
                         let (h, s, l) = rgb_to_hsl(c[0], c[1], c[2]);
                         let (r, g, bb) = hsl_to_rgb(h, (s * v).clamp(0.0, 1.0), l);
+                        [r, g, bb]
+                    }
+                    9 => [v, c[1], c[2]],
+                    10 => [c[0], v, c[2]],
+                    11 => [c[0], c[1], v],
+                    12 => {
+                        a = v.clamp(0.0, 1.0);
+                        c
+                    }
+                    13..=15 => {
+                        let (h, s, l) = rgb_to_hsl(c[0], c[1], c[2]);
+                        let v = v.clamp(0.0, 1.0);
+                        let (h, s, l) = match to {
+                            13 => (h, s, v),
+                            14 => (v, s, l),
+                            _ => (h, v, l),
+                        };
+                        let (r, g, bb) = hsl_to_rgb(h, s, l);
                         [r, g, bb]
                     }
                     _ => [v, v, v],
@@ -656,6 +691,28 @@ mod tests {
         assert!(close(out.get(0, 0), [0.5, 0.5, 0.5, 0.5]), "{:?}", out.get(0, 0));
         let out = run("ec.channel.combiner", &[("from", Value::Enum(5)), ("to", Value::Enum(3)), ("solidAlpha", Value::Bool(true))], img);
         assert!(close(out.get(0, 0), [1.0, 1.0, 1.0, 1.0]), "{:?}", out.get(0, 0));
+    }
+
+    #[test]
+    fn channel_combiner_preserving_targets_keep_other_channels() {
+        // AEP's To Alpha must keep colour, unlike Alpha Only's white matte.
+        let img = Image::filled(1, 1, [0.2, 0.5, 0.9, 1.0]);
+        let from_red = |to| run("ec.channel.combiner", &[("from", Value::Enum(4)), ("to", Value::Enum(to))], img.clone()).get(0, 0);
+        assert!(close(from_red(9), [0.2, 0.5, 0.9, 1.0]));
+        assert!(close(from_red(10), [0.2, 0.2, 0.9, 1.0]));
+        assert!(close(from_red(11), [0.2, 0.5, 0.2, 1.0]));
+        let alpha = run("ec.channel.combiner", &[("from", Value::Enum(12)), ("to", Value::Enum(12))], img.clone()).get(0, 0);
+        assert!(close(alpha, [0.18, 0.45, 0.81, 0.9]), "{alpha:?}");
+        let inverted = run("ec.channel.combiner", &[("from", Value::Enum(12)), ("to", Value::Enum(12)), ("invert", Value::Bool(true))], img.clone()).get(0, 0);
+        assert!(close(inverted, [0.02, 0.05, 0.09, 0.1]), "{inverted:?}");
+        let solid = run("ec.channel.combiner", &[("from", Value::Enum(12)), ("to", Value::Enum(12)), ("solidAlpha", Value::Bool(true))], img.clone()).get(0, 0);
+        assert!(close(solid, img.get(0, 0)), "{solid:?}");
+        let (h, s, l) = rgb_to_hsl(0.2, 0.5, 0.9);
+        for (to, expected) in [(13, (h, s, 0.2)), (14, (0.2, s, l)), (15, (h, 0.2, l))] {
+            let actual = from_red(to);
+            let (r, g, b) = hsl_to_rgb(expected.0, expected.1, expected.2);
+            assert!(close(actual, [r, g, b, 1.0]), "{to}: {actual:?}");
+        }
     }
 
     #[test]

@@ -96,6 +96,9 @@ const CPU_ONLY_CONTROLS: &[(&str, &[&str])] = &[
 /// pinning).
 pub fn gpu_supported(id: &str, ctx: &crate::EffectCtx) -> bool {
     match id {
+        // The legacy GPU combiner implements the original nine To choices. New
+        // preserving channel replacements must use the CPU until its shader agrees.
+        "ec.channel.combiner" if ctx.params.e("to") >= 9 => return false,
         "ec.generate.cellpattern" if (6..=10).contains(&ctx.params.e("cellPattern")) => return false,
         "ec.distort.turbulentdisplace" if ctx.params.e("pinning") >= 8 => return false,
         // #1195: CC Particle World's motion trails (the averaged shutter samples) render on the
@@ -216,6 +219,8 @@ mod tests {
         assert!(ok("ec.distort.ccpowerpin", &[]));
         assert!(!ok("ec.distort.ccpowerpin", &[("unstretch", Value::Bool(true))]));
         assert!(ok("ec.blur.gaussian", &[]));
+        assert!(ok("ec.channel.combiner", &[("to", Value::Enum(3))]));
+        assert!(!ok("ec.channel.combiner", &[("to", Value::Enum(12))]));
     }
 
     #[test]

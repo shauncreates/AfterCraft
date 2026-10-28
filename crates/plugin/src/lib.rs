@@ -76,6 +76,22 @@ pub fn installer(request: &serde_json::Value, progress: &dyn Fn(u64, u64, &str) 
     }
 }
 
+/// Fill absent optional OFX units/GPU declarations from an existing bounded local
+/// descriptor cache. This performs read-only data access and never executes native code.
+/// Callers importing projects can report an error as rescan advice; registration may
+/// continue without these optional declarations.
+pub fn enrich_native_profile(profile: &mut serde_json::Value) -> Result<bool, String> {
+    #[cfg(all(windows, feature = "native-aex"))]
+    {
+        ofx::enrich_profile(profile)
+    }
+    #[cfg(not(all(windows, feature = "native-aex")))]
+    {
+        let _ = profile;
+        Ok(false)
+    }
+}
+
 /// Whether this build can load WebAssembly plug-ins.
 pub fn wasm_available() -> bool {
     cfg!(feature = "wasm")
@@ -100,19 +116,20 @@ pub fn load_wasm(bytes: &[u8], source: &str) -> Result<&'static EffectSpec, Stri
 pub fn loader(bytes: &[u8], source: &str) -> Result<serde_json::Value, String> {
     let ofx = source.to_ascii_lowercase().ends_with(".ecofx.json");
     let native = ofx || source.to_ascii_lowercase().ends_with(".ecaex.json");
-    let spec = if native {
+    let (spec, gpu) = if native {
         #[cfg(all(windows, feature = "native-aex"))]
         {
-            if ofx { self::ofx::load(bytes, source)? } else { native_aex::load(bytes, source)? }
+            if ofx { self::ofx::load(bytes, source)? } else { (native_aex::load(bytes, source)?, serde_json::Value::Null) }
         }
         #[cfg(not(all(windows, feature = "native-aex")))]
         {
             return Err("Experimental AEX hosting requires the Windows native-aex build".into());
         }
     } else {
-        load_wasm(bytes, source)?
+        (load_wasm(bytes, source)?, serde_json::Value::Null)
     };
     let m = effectcraft_effects::plugin::plugin(spec.id).map(|p| p.manifest().clone());
+    let native_gpu = effectcraft_effects::plugin::plugin(spec.id).is_some_and(|p| p.native_gpu_available());
     Ok(serde_json::json!({
         "id": spec.id,
         "name": spec.name,
@@ -120,7 +137,9 @@ pub fn loader(bytes: &[u8], source: &str) -> Result<serde_json::Value, String> {
         "version": m.as_ref().map(|m| m.version.clone()).unwrap_or_default(),
         "api": PLUGIN_API_VERSION,
         "experimentalNative": native,
-        "nativeGpuAcceleration": false,
+        "nativeGpuAcceleration": native_gpu,
+        "nativeGpuMode": if native_gpu {"automatic"} else {"cpu"},
+        "nativeGpuCapabilities": gpu,
         "params": spec.params.len(),
     }))
 }

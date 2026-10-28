@@ -29,7 +29,8 @@ Adobe or OFX. Effects & Presets displays the selected edition; existing projects
 
 **File > Import > After Effects Project** accepts `.aep` and `.aepx`. Supported effect identities,
 parameters and animation are rebuilt against installed plugins. Sapphire has explicit Adobe-to-OFX
-mappings; other vendors need known mappings. The saved edition preference is a priority, with
+mappings, including declared pixel/normalized parameter units. Adobe-only effects can fall back
+to an installed AEX when no OFX equivalent is available. The saved edition preference is a priority, with
 fallback when a matching preferred edition is unavailable. Unknown effects and unsupported data
 are recorded in the import report and preserved source copy. Import is one undo step.
 
@@ -45,8 +46,18 @@ Native allocations and temporary render buffers are additional. Change the cache
 **Settings > Memory & CPU**. Smaller caches retain fewer preview frames in RAM.
 
 The OFX host thread suite defaults to four threads; `AFTERCRAFT_OFX_THREADS=1..16` overrides it.
-Plugins can create their own threads. Native-plugin GPU suites are not implemented; the built-in
-GPU compositor remains available. Full-resolution plugin previews may run below real time.
+Plugins can create their own threads. On Windows, compatible OFX effects use a hardware OpenGL
+context automatically, with bounded texture allocations and CPU fallback for recoverable GPU
+errors. Licensing errors remain visible. Set `AFTERCRAFT_OFX_GPU=cpu` to force CPU rendering.
+Native CUDA/OpenCL/Metal host suites and Adobe GPU suites are not implemented. Helper transfers
+and GPU readback still cost time; full-resolution previews may run below real time.
+
+## Current easing editor
+
+Open **Window > Current** to draw a cubic Bezier easing curve or bake Spring, Elastic and Bounce
+motion into selected intervals. It includes visual presets, an independent motion preview,
+compact layout, optional live application, saved libraries and undo. Current is an original
+native tool; it does not require Flow or CEP. See [Current](docs/current.md) for controls and limits.
 
 ## Build
 

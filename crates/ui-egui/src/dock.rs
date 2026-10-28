@@ -27,6 +27,7 @@ pub enum PanelKind {
     Align,
     Tracker,
     Wiggler,
+    Current,
     Smoother,
     MotionSketch,
     Paint,
@@ -55,7 +56,7 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 34] = [
+    pub const ALL: [PanelKind; 35] = [
         PanelKind::Project,
         PanelKind::EffectControls,
         PanelKind::Composition,
@@ -71,6 +72,7 @@ impl PanelKind {
         PanelKind::Align,
         PanelKind::Tracker,
         PanelKind::Wiggler,
+        PanelKind::Current,
         PanelKind::Smoother,
         PanelKind::MotionSketch,
         PanelKind::Paint,
@@ -108,6 +110,7 @@ impl PanelKind {
             PanelKind::Align => "Align",
             PanelKind::Tracker => "Tracker",
             PanelKind::Wiggler => "Wiggler",
+            PanelKind::Current => "Current",
             PanelKind::Smoother => "Smoother",
             PanelKind::MotionSketch => "Motion Sketch",
             PanelKind::Paint => "Paint",

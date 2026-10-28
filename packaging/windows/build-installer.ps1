@@ -1,7 +1,7 @@
 param(
     [string]$Payload = (Join-Path $PSScriptRoot '..\..\artifacts\AfterCraft'),
     [string]$IsccPath = 'ISCC.exe',
-    [string]$Version = '0.16.0.1'
+    [string]$Version = '0.16.0.2'
 )
 $ErrorActionPreference = 'Stop'
 $payloadPath = (Resolve-Path -LiteralPath $Payload).Path

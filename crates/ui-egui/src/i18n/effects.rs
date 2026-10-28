@@ -220,6 +220,7 @@ const SIMPLIFIED_CHINESE: &[Row] = &[
     ("ec.control.point3d", "3D Point Control", "3D 点控制"),
     ("ec.control.slider", "Slider Control", "滑块控制"),
     ("ec.control.stereo3d", "Stereo 3D Controls", "立体 3D 控制"),
+    ("ec.control.wiggleposition", "Wiggle - Position", "摆动 - 位置"),
     ("ec.distort.bezierwarp", "Bezier Warp", "贝塞尔曲线变形"),
     ("ec.distort.bulge", "Bulge", "凸出"),
     ("ec.distort.ccbender", "CC Bender", "CC 弯曲器"),

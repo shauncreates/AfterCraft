@@ -58,7 +58,7 @@ fn build_host_props() -> PropSet {
     p.put_int(IE_SETABLE_FRAME_RATE, 0);
     p.put_int(IE_SETABLE_FIELDING, 0);
     p.put_str(IE_NATIVE_ORIGIN, IE_NATIVE_ORIGIN_BOTTOM_LEFT);
-    p.put_str(IE_OPENGL_RENDER_SUPPORTED, "false");
+    p.put_str(IE_OPENGL_RENDER_SUPPORTED, if crate::opengl::available() { "true" } else { "false" });
     p.put_int(PH_SUPPORTS_CUSTOM_ANIMATION, 0);
     p.put_int(PH_SUPPORTS_STRING_ANIMATION, 0);
     p.put_int(PH_SUPPORTS_BOOLEAN_ANIMATION, 1);
@@ -101,6 +101,7 @@ extern "C" fn fetch_suite(_host: Handle, name: *const c_char, version: c_int) ->
             (SUITE_INTERACT, 1) => &misc::INTERACT as *const OfxInteractSuiteV1 as *const c_void,
             (SUITE_PROGRESS, 1 | 2) => &misc::PROGRESS as *const OfxProgressSuite as *const c_void,
             (SUITE_TIMELINE, 1) => &misc::TIMELINE as *const OfxTimeLineSuiteV1 as *const c_void,
+            (SUITE_OPENGL, 1) if crate::opengl::available() => &crate::opengl::SUITE as *const OfxImageEffectOpenGLRenderSuiteV1 as *const c_void,
             _ => {
                 crate::props::note_unknown(&format!("suite {name} v{version}"));
                 std::ptr::null()

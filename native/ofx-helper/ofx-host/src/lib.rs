@@ -2,9 +2,9 @@
 //!
 //! This crate loads native OFX plug-in bundles (RE:Vision ReelSmart Motion Blur, Boris FX
 //! Sapphire, the free OFX collections, ...) and registers every plug-in as an ordinary
-//! AfterCraft effect through the plug-in API v2 (`effectcraft_effects::plugin`). It is a CPU
-//! host: float premultiplied RGBA images (byte / short / RGB / alpha plug-ins are converted),
-//! no GPU or OpenGL, no overlay interacts. See `docs/ofx.md` for usage and how it fits together.
+//! AfterCraft effect through the plug-in API v2 (`effectcraft_effects::plugin`). CPU images are
+//! premultiplied RGBA (byte / short / RGB / alpha plug-ins are converted); Windows also negotiates
+//! native OpenGL textures with compatible plug-ins. Overlay interacts remain unavailable.
 //!
 //! **This crate runs native plug-in code without a sandbox**, so it is only linked into the
 //! OpenFX effect helper (`helpers/ofx`), a separate process AfterCraft talks to over the
@@ -29,6 +29,7 @@ pub mod effect;
 pub mod ffi;
 pub mod instance;
 pub mod loader;
+pub mod opengl;
 pub mod params;
 pub mod props;
 pub mod suites;

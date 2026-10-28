@@ -131,7 +131,7 @@ Layer parameters like any other extra clip.
 * `clipGetImage` on the source clip accepts fractional times (frame 12.5 renders the layer at that
   time; footage shows the frame the media layer picks for it, blended if the layer's Frame Blending
   is on) and fails with `kOfxStatFailed` outside the frame range instead of inventing a frame.
-* Limits: no GPU, no on-screen overlays (the speed graph and motion-vector tools are unavailable), no
+* Limits: native GPU support currently uses Windows OpenGL; no on-screen overlays (the speed graph and motion-vector tools are unavailable), no
   host-supplied motion vectors (Twixtor's own optical flow runs on the CPU and is slow at high
   resolution). The extra clips' frame ranges are assumed to equal the source's.
 
@@ -148,14 +148,12 @@ EffectCraft does not include, license or activate any third-party plug-in.
 
 ## Known limitations
 
-* **No GPU.** Plug-ins are rendered on the CPU through the OFX CPU API. Plug-ins that only render
-  with OpenGL, CUDA or Metal fall back to their CPU path, or fail to load if they have none.
+* **GPU API coverage.** Windows OpenGL texture rendering is supported when the plug-in opts in;
+  native CUDA/OpenCL/Metal host APIs are not implemented. Other effects use their CPU paths.
 * **No on-screen overlays.** The plug-ins' viewer widgets (handles, tracking boxes) do not appear;
   use the parameters instead. Push buttons that open dialogs do nothing.
-* **Native code runs in-process.** An OFX plug-in is a native library with full access to the
-  machine. A bug in one can crash EffectCraft, and a malicious one can do anything the app can.
-  Only install plug-ins you trust. (This is why the host is opt-in; EffectCraft's own plug-ins are
-  sandboxed WebAssembly.)
+* **Native code runs in the helper.** An OFX plug-in has the helper's user permissions.
+  A native crash stops that helper; AfterCraft reports the error and can restart it.
 * **Glows on transparent layers.** Some plug-ins (Sapphire's glows) add light without adding alpha,
   so on a layer with transparent areas the glow outside the opaque pixels disappears. On footage, or
   a precomp with a background, it shows as in other hosts.

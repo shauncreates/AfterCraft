@@ -44,6 +44,7 @@ effectcraft-effects = { workspace = true }
 effectcraft-helper-host = { workspace = true }
 effectcraft-ofx = { workspace = true }
 log = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -3,6 +3,8 @@
   "ADBE Channel Combiner": "ec.channel.combiner",
   "ADBE Samurai": "ec.matte.rotobrush",
   "APC Shatter": "ec.sim.shatter",
+  "Keylight 906": "ec.keying.keylight",
+  "ADBE CM WigglePosition": "ec.control.wiggleposition",
   "ADBE Gaussian Blur 2": "ec.blur.gaussian",
   "ADBE Box Blur2": "ec.blur.fastbox",
   "ADBE Motion Blur": "ec.blur.directional",

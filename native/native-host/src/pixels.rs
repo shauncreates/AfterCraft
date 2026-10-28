@@ -3,6 +3,72 @@
 use after_effects_sys as ae;
 use std::{ffi::c_void, ptr};
 
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn transfer(
+    _effect: ae::PF_ProgPtr,
+    _quality: ae::PF_Quality,
+    flags: ae::PF_ModeFlags,
+    field: ae::PF_Field,
+    area: *const ae::PF_Rect,
+    source: *const ae::PF_EffectWorld,
+    mode: *const ae::PF_CompositeMode,
+    mask: *const ae::PF_MaskWorld,
+    x: i32,
+    y: i32,
+    dest: *mut ae::PF_EffectWorld,
+) -> i32 {
+    if mode.is_null() {
+        return ae::PF_Err_BAD_CALLBACK_PARAM;
+    }
+    let mode = unsafe { *mode };
+    let masked = !mask.is_null() && !unsafe { (*mask).mask.data.is_null() };
+    if flags != 0 || field != ae::PF_Field_FRAME || mode.xfer != ae::PF_Xfer_COPY || mode.opacity != 255 || mode.rgb_only != 0 || masked {
+        crate::event(
+            serde_json::json!({"stage":"unsupported_callback","name":"transfer_rect", "flags":flags,"field":field,"mask":masked,"x":x,"y":y,"mode":mode.xfer,"opacity":mode.opacity,"opacitySu":mode.opacitySu,"rgbOnly":mode.rgb_only}),
+        );
+        return ae::PF_Err_INVALID_CALLBACK;
+    }
+    let source = match unsafe { world(source) } {
+        Ok(w) => w,
+        Err(e) => return e,
+    };
+    let dest = match unsafe { world(dest) } {
+        Ok(w) => w,
+        Err(e) => return e,
+    };
+    let requested = if area.is_null() { ae::PF_Rect { left: 0, top: 0, right: source.width, bottom: source.height } } else { unsafe { *area } };
+    if requested.left > requested.right || requested.top > requested.bottom {
+        return ae::PF_Err_BAD_CALLBACK_PARAM;
+    }
+    let rect = clip(requested, source.width, source.height);
+    let width = (rect.right - rect.left).max(0) as usize;
+    let height = (rect.bottom - rect.top).max(0) as usize;
+    let Some(count) = width.checked_mul(height).filter(|n| *n <= 16 * 1024 * 1024) else {
+        return ae::PF_Err_OUT_OF_MEMORY;
+    };
+    if count == 0 {
+        return 0;
+    }
+    // Snapshot supports overlapping worlds and shifted in-place copies.
+    let mut pixels = Vec::new();
+    if pixels.try_reserve_exact(count).is_err() {
+        return ae::PF_Err_OUT_OF_MEMORY;
+    }
+    for sy in rect.top..rect.bottom {
+        for sx in rect.left..rect.right {
+            pixels.push(unsafe { *pixel(&source, sx, sy) });
+        }
+    }
+    for (i, value) in pixels.into_iter().enumerate() {
+        let dx = i64::from(x) + i64::from(rect.left) - i64::from(requested.left) + (i % width) as i64;
+        let dy = i64::from(y) + i64::from(rect.top) - i64::from(requested.top) + (i / width) as i64;
+        if dx >= 0 && dy >= 0 && dx < i64::from(dest.width) && dy < i64::from(dest.height) {
+            unsafe { pixel(&dest, dx as i32, dy as i32).write(value) };
+        }
+    }
+    0
+}
+
 unsafe fn world(pointer: *const ae::PF_EffectWorld) -> Result<ae::PF_EffectWorld, i32> {
     if pointer.is_null() {
         return Err(ae::PF_Err_BAD_CALLBACK_PARAM);
@@ -131,6 +197,28 @@ mod tests {
     }
     unsafe extern "C" fn cancel(_: ae::PF_ProgPtr) -> i32 {
         321
+    }
+    #[test]
+    fn opaque_transfer_clips_destinations_and_snapshots_in_place_source() {
+        unsafe {
+            let mut data = [0; 48];
+            let mut w = buffer(&mut data);
+            for x in 0..3 {
+                pixel(&w, x, 0).write(ae::PF_Pixel { alpha: 255, red: (x + 1) as u8, green: 0, blue: 0 });
+            }
+            let mut mode: ae::PF_CompositeMode = std::mem::zeroed();
+            mode.xfer = ae::PF_Xfer_COPY as ae::PF_TransferMode;
+            mode.opacity = 255;
+            let empty_mask: ae::PF_MaskWorld = std::mem::zeroed();
+            assert_eq!(transfer(ptr::null_mut(), 0, 0, ae::PF_Field_FRAME as ae::PF_Field, ptr::null(), &w, &mode, &empty_mask, 1, 0, &mut w), 0);
+            assert_eq!([(*pixel(&w, 0, 0)).red, (*pixel(&w, 1, 0)).red, (*pixel(&w, 2, 0)).red], [1, 1, 2]);
+            assert_eq!(&data[12..16], &[0; 4], "padding stays untouched");
+            let before = data;
+            assert_eq!(transfer(ptr::null_mut(), 0, 0, ae::PF_Field_FRAME as ae::PF_Field, ptr::null(), &w, &mode, ptr::null(), i32::MAX, i32::MIN, &mut w), 0);
+            assert_eq!(data, before, "out-of-frame coordinates cannot overflow into the buffer");
+            mode.opacity = 128;
+            assert_ne!(transfer(ptr::null_mut(), 0, 0, ae::PF_Field_FRAME as ae::PF_Field, ptr::null(), &w, &mode, ptr::null(), 0, 0, &mut w), 0);
+        }
     }
     #[test]
     fn clipped_fill_preserves_padding_and_clears_with_null_color() {

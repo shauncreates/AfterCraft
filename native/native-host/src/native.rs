@@ -68,7 +68,7 @@ unsafe extern "C" fn add_param(_effect: ae::PF_ProgPtr, index: i32, def: *mut ae
         Err(code) => return code,
     };
     event(
-        json!({"stage":"parameter","index":index,"name":String::from_utf8_lossy(&name),"type":def.param_type,"numeric":numeric,"hidden":def.ui_flags & ae::PF_PUI_INVISIBLE != 0}),
+        json!({"stage":"parameter","index":index,"diskId":unsafe {def.uu.id},"name":String::from_utf8_lossy(&name),"type":def.param_type,"numeric":numeric,"hidden":def.ui_flags & ae::PF_PUI_INVISIBLE != 0}),
     );
     PARAMS.with(|params| {
         let Ok(mut params) = params.try_borrow_mut() else {
@@ -256,9 +256,17 @@ unsafe extern "C" fn acquire(name: *const c_char, version: i32, suite: *mut *con
         ("PF World Suite", 1) => &worlds::SUITE1 as *const _ as *const c_void,
         ("PF Utility Suite", 8) => &utility::SUITE as *const _ as *const c_void,
         ("PF AE App Suite", 6) => &application::SUITE as *const _ as *const c_void,
+        ("PF Effect UI Suite", 1) => &crate::effect_ui::SUITE as *const _ as *const c_void,
+        ("PF ColorParamSuite", 1) => &crate::value_suites::COLOR as *const _ as *const c_void,
+        ("AEGP Persistent Data Suite", 3) => &crate::persistent::SUITE3 as *const _ as *const c_void,
+        ("AEGP Memory Suite", 1) => &crate::persistent::MEMORY1 as *const _ as *const c_void,
         ("PF Effect Sequence Data Suite", 1) => &crate::sequence::SUITE as *const _ as *const c_void,
         ("AEGP PF Interface Suite", 1) => &crate::aegp::INTERFACE as *const _ as *const c_void,
         ("AEGP Layer Suite", 11) => &crate::aegp::LAYER as *const _ as *const c_void,
+        ("AEGP Layer Suite", 13) => &crate::aegp::LAYER7 as *const _ as *const c_void,
+        ("PF Color Settings Suite", 3) => &crate::aegp::COLOR_SETTINGS as *const _ as *const c_void,
+        ("PF World Transform Suite", 1) => &crate::aegp::WORLD_TRANSFORM as *const _ as *const c_void,
+        ("PF Iterate8 Suite", 1) => &crate::aegp::ITERATE8 as *const _ as *const c_void,
         ("AEGP Stream Suite", 4) => &crate::aegp::STREAM as *const _ as *const c_void,
         ("AEGP Camera Suite", 2) => &crate::aegp::CAMERA as *const _ as *const c_void,
         ("AEGP Utility Suite", 5) => &crate::aegp::UTILITY as *const _ as *const c_void,
@@ -281,8 +289,16 @@ unsafe extern "C" fn release(name: *const c_char, version: i32) -> ae::SPErr {
         | (b"PF World Suite", 1 | 2)
         | (b"PF Utility Suite", 8)
         | (b"PF AE App Suite", 6)
+        | (b"PF Effect UI Suite", 1)
+        | (b"PF ColorParamSuite", 1)
+        | (b"AEGP Persistent Data Suite", 3)
+        | (b"AEGP Memory Suite", 1)
         | (b"AEGP PF Interface Suite", 1)
         | (b"AEGP Layer Suite", 11)
+        | (b"AEGP Layer Suite", 13)
+        | (b"PF Color Settings Suite", 3)
+        | (b"PF World Transform Suite", 1)
+        | (b"PF Iterate8 Suite", 1)
         | (b"AEGP Stream Suite", 4)
         | (b"AEGP Camera Suite", 2)
         | (b"AEGP Utility Suite", 5)
@@ -514,8 +530,8 @@ fn render_frame(
     // Several SDK plugins require this lifecycle even when no frame is rendered.
     let (w, h, mut source) =
         if let Some(job) = job { frame::load(&job.input)? } else { (64, 64, vec![ae::PF_Pixel { alpha: 0, red: 0, green: 0, blue: 0 }; 64 * 64]) };
-    let _context = crate::aegp_context::Guard::enter(input.effect_ref);
     let logical = if let Some(job) = job { job.logical_size(w, h)? } else { [w, h] };
+    let _context = crate::aegp_context::Guard::enter(input.effect_ref, logical);
     let downsample = job.map(|job| job.downsample).unwrap_or_default();
     input.width = logical[0] as i32;
     input.height = logical[1] as i32;

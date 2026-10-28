@@ -30,6 +30,9 @@ struct Descriptor {
     manifest: PluginManifest,
     /// Native 1-based parameter index for each manifest parameter.
     parameter_indices: Vec<usize>,
+    /// Public SDK disk IDs identify parameters independently of translated UI labels.
+    #[serde(default)]
+    parameter_match_names: std::collections::HashMap<String, String>,
 }
 #[derive(Default, serde::Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +69,11 @@ impl Descriptor {
             return Err("AEX descriptor must explicitly opt in with experimental_aex: true; native plugins execute with your OS access and Boris output is not verified".into());
         }
         self.manifest.validate()?;
+        if self.parameter_match_names.len() > self.manifest.params.len()
+            || self.parameter_match_names.iter().any(|(id, name)| name.len() > 1024 || !self.manifest.params.iter().any(|p| p.id == *id))
+        {
+            return Err("Invalid AEX parameter match names".into());
+        }
         for path in [&self.worker, &self.plugin] {
             if !path.is_absolute() || !path.is_file() {
                 return Err("AEX worker and plugin must be existing absolute file paths".into());

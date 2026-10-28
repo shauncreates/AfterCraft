@@ -21,3 +21,11 @@ and OFX Wipe Amount ranges, with corresponding scaling of temporal ease speeds:
 https://borisfx.com/documentation/sapphire/ae/wipeline/ and
 https://borisfx.com/documentation/sapphire/ofx/wipeline/ . Runtime range metadata
 is checked before applying the percentage conversion.
+
+`builtin_maps.py` describes source project match IDs and original engine parameter
+paths. It does not contain code from commercial effects. The selected popup choice
+is matched by label, and stored Fill/Drop Shadow opacity ranges are checked before
+normalizing to the built-in's percent units. See `docs/aep-builtin-mapping.md` for
+scope and unsupported controls. Channel Combiner's channel replacement behavior
+follows Adobe's public documentation:
+https://helpx.adobe.com/ca/after-effects/desktop/apply-effects-and-animation-presets/list-of-effects/channel-effects.html .

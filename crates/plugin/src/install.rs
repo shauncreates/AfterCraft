@@ -164,6 +164,8 @@ fn profile(report: &Value, effect: &Value, worker: &Path, plugin: &Path, dirs: &
     let mut indices = Vec::new();
     let mut index = 0usize;
     let mut unsupported = 0usize;
+    let match_name = effect["match_name"].as_str().unwrap_or_default();
+    let mut parameter_match_names = serde_json::Map::new();
     for entry in events.iter().filter(|e| e["stage"] == "parameter") {
         index += 1;
         if index > 1024 || entry["index"] != -1 {
@@ -202,9 +204,13 @@ fn profile(report: &Value, effect: &Value, worker: &Path, plugin: &Path, dirs: &
         }
         params.push(param);
         indices.push(index);
+        if let Some(disk_id) = entry["diskId"].as_i64().filter(|id| (0..=9999).contains(id))
+            && !match_name.is_empty()
+        {
+            parameter_match_names.insert(format!("p{index}"), json!(format!("{match_name}-{disk_id:04}")));
+        }
     }
     let name = effect["name"].as_str().filter(|s| !s.is_empty()).ok_or("effect has no display name")?;
-    let match_name = effect["match_name"].as_str().unwrap_or_default();
     let key = if match_name.is_empty() { format!("{}:{}", plugin.display(), effect["entry_point"]) } else { match_name.into() };
     let manifest = PluginManifest {
         api: 1,
@@ -221,7 +227,7 @@ fn profile(report: &Value, effect: &Value, worker: &Path, plugin: &Path, dirs: &
     manifest.validate()?;
     Ok((
         json!({"experimental_aex":true,"worker":worker,"plugin":plugin,"match_name":if match_name.is_empty(){None}else{Some(match_name)},
-        "dll_dirs":dirs,"host_api":"after_effects","parameter_indices":indices,"manifest":manifest}),
+        "dll_dirs":dirs,"host_api":"after_effects","parameter_indices":indices,"parameter_match_names":parameter_match_names,"manifest":manifest}),
         unsupported,
     ))
 }
@@ -537,6 +543,20 @@ pub fn install(request: &Value, progress: Progress<'_>) -> Result<Value, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_profiles_keep_unlimited_controls_and_stable_disk_ids() {
+        let report = json!({"events":[
+            {"stage":"params_setup_result","code":0},
+            {"stage":"parameter","index":-1,"diskId":42,"name":"Amount","numeric":{
+                "type":"slider","default":100.0,"min":0.0,"max":f64::MAX,"sliderMin":0.0,"sliderMax":500.0}}
+        ]});
+        let effect = json!({"name":"Original test effect","match_name":"Test Effect","entry_point":"TestMain"});
+        let (descriptor, unsupported) = profile(&report, &effect, Path::new("worker.exe"), Path::new("test.aex"), &[]).unwrap();
+        assert_eq!(unsupported, 0);
+        assert_eq!(descriptor["manifest"]["params"][0]["id"], "p1");
+        assert_eq!(descriptor["manifest"]["params"][0]["max"].as_f64(), Some(f64::MAX));
+        assert_eq!(descriptor["parameter_match_names"]["p1"], "Test Effect-0042");
+    }
     #[test]
     fn adobe_migration_requires_an_installed_after_effects_host() {
         let dir = tempfile::tempdir().unwrap();

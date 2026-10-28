@@ -8,7 +8,7 @@
 > preview resolutions, with rational downsampling, the original layer dimensions, the composition's
 > rational frame rate and one input layer. CPU SmartFX and legacy
 > rendering are supported; `render_mode` selects `auto` (default), `smart` or `legacy`.
-> Native plugin GPU, HDR, expanded bounds, temporal/additional inputs and CEP are unavailable.
+> Adobe plugin GPU, HDR, expanded bounds, temporal/additional inputs and CEP are unavailable.
 > Descriptors are not embedded in projects; load them before opening/rendering projects that
 > use them. Explicitly opted-in `.ecaex.json` profiles in the private Plug-ins folder load at startup.
 > Worker failures preserve the input frame and log an error. Vendor watermark/error images can
@@ -317,7 +317,12 @@ OFX uses float RGBA frames and persistent isolated helpers. It supports scaled p
 time sampling on footage, including parameters and effects preceding the current effect.
 Temporal requests preserve frame origins and are bounded by frame, memory, callback and time
 limits. Temporal adjustment layers, additional layer inputs and expanded output bounds remain
-unsupported. Both native adapters advertise no host GPU acceleration.
+unsupported. Windows OFX effects can use the helper's hardware OpenGL texture suite, including
+context attach/detach, scaled image uploads and readback. Compatible profiles advertise that
+capability separately from the built-in WGSL renderer. `AFTERCRAFT_OFX_GPU=cpu` forces CPU;
+`AFTERCRAFT_OFX_GPU_TRACE` selects an optional bounded JSONL diagnostic file. Recoverable GPU
+failures fall back to CPU; vendor licensing errors propagate. Native CUDA/OpenCL/Metal and Adobe
+GPU suites are not implemented. Transfers and readback still incur CPU and memory costs.
 Full vendor UI, project services, licensing compatibility and broad commercial rendering
 conformance remain incomplete. Native binaries run with normal user OS access; process isolation
 contains crashes. OFX needs the vendor's OFX edition; `.aex` cannot be converted by this host.

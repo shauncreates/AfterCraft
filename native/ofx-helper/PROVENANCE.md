@@ -16,4 +16,6 @@ core uses an original safe Rust protocol-v1 client, with explicit limits for uns
 host callbacks. Native OFX ABI code remains in this separate helper workspace.
 
 OpenFX API declarations are BSD-3-Clause; see ATTRIBUTION.md and LICENSE-OPENFX-BSD.
+The Windows hardware OpenGL host and synthetic GPU fixtures are original AfterCraft code,
+implemented from the public `ofxGPURender.h` contract and Win32/OpenGL interfaces.
 No commercial plugins, presets, fonts, icons or Adobe assets are redistributed here.

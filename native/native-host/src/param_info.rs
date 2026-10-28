@@ -3,6 +3,19 @@ use after_effects_sys as ae;
 use serde_json::{Value, json};
 use std::{cell::RefCell, ffi::CString};
 thread_local! {static TEXT: RefCell<Vec<CString>>=const{RefCell::new(Vec::new())};}
+fn slider(default: f64, min: f64, max: f64, slider_min: f64, slider_max: f64) -> Value {
+    // An unlimited SDK bound is legal (Twitch uses +infinity). JSON cannot encode
+    // infinity: serializing it as null used to discard the entire control.
+    if !default.is_finite() || min.is_nan() || max.is_nan() || !slider_min.is_finite() || !slider_max.is_finite() {
+        return Value::Null;
+    }
+    let min = min.clamp(-f64::MAX, f64::MAX);
+    let max = max.clamp(-f64::MAX, f64::MAX);
+    if min > max || default < min || default > max || slider_min > slider_max {
+        return Value::Null;
+    }
+    json!({"type":"slider","default":default,"min":min,"max":max,"sliderMin":slider_min,"sliderMax":slider_max})
+}
 pub fn capture(def: &mut ae::PF_ParamDef) -> Result<Value, i32> {
     unsafe {
         Ok(match def.param_type {
@@ -13,7 +26,8 @@ pub fn capture(def: &mut ae::PF_ParamDef) -> Result<Value, i32> {
                 json!({"type":"slider","default":f64::from(def.u.fd.dephault)/65536.0,"min":f64::from(def.u.fd.valid_min)/65536.0,"max":f64::from(def.u.fd.valid_max)/65536.0,"sliderMin":f64::from(def.u.fd.slider_min)/65536.0,"sliderMax":f64::from(def.u.fd.slider_max)/65536.0})
             }
             ae::PF_Param_FLOAT_SLIDER => {
-                json!({"type":"slider","default":def.u.fs_d.dephault,"min":def.u.fs_d.valid_min,"max":def.u.fs_d.valid_max,"sliderMin":def.u.fs_d.slider_min,"sliderMax":def.u.fs_d.slider_max})
+                let p = def.u.fs_d;
+                slider(f64::from(p.dephault), f64::from(p.valid_min), f64::from(p.valid_max), f64::from(p.slider_min), f64::from(p.slider_max))
             }
             ae::PF_Param_CHECKBOX => json!({"type":"checkbox","default":def.u.bd.dephault!=0}),
             ae::PF_Param_ANGLE => {
@@ -70,6 +84,16 @@ pub fn capture(def: &mut ae::PF_ParamDef) -> Result<Value, i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unlimited_slider_remains_a_serializable_control() {
+        let value = slider(100.0, 0.0, f64::INFINITY, 0.0, 500.0);
+        let roundtrip: Value = serde_json::from_str(&serde_json::to_string(&value).unwrap()).unwrap();
+        assert_eq!(roundtrip["default"], 100.0);
+        assert_eq!(roundtrip["max"].as_f64(), Some(f64::MAX));
+        assert_eq!(roundtrip["sliderMax"], 500.0);
+        assert!(slider(f64::NAN, 0.0, f64::INFINITY, 0.0, 500.0).is_null());
+        assert!(slider(1.0, f64::NAN, 10.0, 0.0, 10.0).is_null());
+    }
     #[test]
     fn owns_popup_text_after_registration() {
         let mut def: ae::PF_ParamDef = unsafe { std::mem::zeroed() };

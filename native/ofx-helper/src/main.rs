@@ -100,7 +100,25 @@ fn main() {
         effectcraft_ofx::set_state_dir(PathBuf::from(dir));
     }
     let mut ofx = Ofx { paths: effectcraft_ofx::default_search_paths() };
-    let code = if args.iter().any(|a| a == HELPER_ARG) {
+    let code = if args.first().is_some_and(|a| a == "--gpu-info") {
+        println!("{}", effectcraft_ofx::opengl::info());
+        0
+    } else if args.first().is_some_and(|a| a == "--describe") {
+        if let Some(path) = args.get(1) {
+            let report = effectcraft_ofx::load_path(std::path::Path::new(path));
+            let records: Vec<_> = report
+                .loaded
+                .iter()
+                .filter(|e| args.get(2).is_none_or(|id| e.id == *id || e.ofx_id == *id))
+                .filter_map(|e| effectcraft_ofx::loader::metadata(&e.id))
+                .collect();
+            println!("{}", serde_json::json!({"effects":records,"errors":report.errors,"gpu":effectcraft_ofx::opengl::info()}));
+            if records.is_empty() { 1 } else { 0 }
+        } else {
+            eprintln!("--describe requires an OFX bundle or binary path");
+            2
+        }
+    } else if args.iter().any(|a| a == HELPER_ARG) {
         match serve(&mut ofx) {
             Ok(()) => 0,
             Err(e) => {

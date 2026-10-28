@@ -4,6 +4,7 @@ pub mod anim_tools;
 pub mod camera_tracker_ui;
 pub mod comp_settings;
 pub mod content_fill_panel;
+pub mod current;
 pub mod delete_items;
 pub mod dialogs;
 pub mod dialogs_3d;
@@ -189,6 +190,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: PanelKind, rect: Rec
         PanelKind::MaskInterpolation => anim_tools::mask_interpolation(app, ui, rect),
         PanelKind::ScriptConsole => script_console::show(app, ui, rect),
         PanelKind::Wiggler => anim_tools::wiggler(app, ui, rect),
+        PanelKind::Current => current::show(app, ui, rect),
         PanelKind::Smoother => anim_tools::smoother(app, ui, rect),
         PanelKind::MotionSketch => anim_tools::motion_sketch(app, ui, rect),
         PanelKind::RenderQueue => render_queue::show(app, ui, rect),

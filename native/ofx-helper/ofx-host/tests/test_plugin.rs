@@ -143,8 +143,38 @@ fn all_effects_register() {
 }
 
 #[test]
+fn native_gpu_copy_and_cpu_fallback_preserve_pixels_and_license_errors() {
+    if !effectcraft_ofx::opengl::available() {
+        assert!(std::env::var_os("AFTERCRAFT_REQUIRE_GPU_TESTS").is_none(), "GPU required but unavailable: {}", effectcraft_ofx::opengl::info());
+        return;
+    }
+    let Some(copy) = effect("org.effectcraft.test.GpuCopy") else {
+        return;
+    };
+    let source = [[0.1, 0.2, 0.3, 0.4], [2.5, -0.2, 0.0, 1.0], [0.8, 0.4, 0.2, 1.0], [0.0; 4]];
+    for _ in 0..3 {
+        let (_, _, _, pixels) = run(&*copy, 2, 2, &source, &[], &FakeHost::default());
+        assert_eq!(pixels, source, "GPU-only fixture has no CPU render path; HDR and row orientation must survive actual texture rendering");
+    }
+    let fallback = effect("org.effectcraft.test.GpuFallback").unwrap();
+    let (_, _, _, pixels) = run(&*fallback, 2, 2, &source, &[], &FakeHost::default());
+    assert_eq!(pixels, source, "GPU failure must retry the fixture's CPU pass-through");
+    let unlicensed = effect("org.effectcraft.test.GpuUnlicensed").unwrap();
+    let mut pixels = source;
+    let (flat, texts) = defaults(&*unlicensed, &[]);
+    let params = PluginParams { manifest: unlicensed.manifest(), flat: &flat, texts: &texts };
+    let mut frame = PluginFrame { width: 2, height: 2, pixels: &mut pixels, scale: 1.0, origin: [0.0; 2], layer_size: [2.0; 2] };
+    assert!(unlicensed.render(&mut frame, &params, 0.0).unwrap_err().contains("unlicensed"));
+    assert_eq!(pixels, source, "License errors must never be hidden by a CPU retry");
+}
+
+#[test]
 fn param_kinds() {
     let Some(p) = effect("org.effectcraft.test.AllParams") else { return };
+    let metadata = effectcraft_ofx::loader::metadata("org.effectcraft.test.allparams").expect("retained descriptor metadata");
+    assert_eq!(metadata["parameterSemantics"]["double2d"]["doubleType"], "OfxParamDoubleTypeXYAbsolute");
+    assert_eq!(metadata["parameterSemantics"]["double2d"]["ofxName"], "double2d");
+    assert_eq!(metadata["parameterSemantics"]["double"]["default"], serde_json::json!([0.5]));
     let kind = |n: &str| find(&*p, n).kind.clone();
     assert!(matches!(kind("double"), PluginParamKind::Slider { integer: false, .. }));
     assert!(matches!(kind("int"), PluginParamKind::Slider { integer: true, .. }));

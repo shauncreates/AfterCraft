@@ -42,7 +42,7 @@ pub fn set_state_dir(dir: PathBuf) {
     *state_dir_cell().lock().unwrap_or_else(PoisonError::into_inner) = Some(dir);
 }
 
-fn state_dir() -> Option<PathBuf> {
+pub(crate) fn state_dir() -> Option<PathBuf> {
     state_dir_cell().lock().unwrap_or_else(PoisonError::into_inner).clone()
 }
 

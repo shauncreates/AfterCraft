@@ -235,6 +235,11 @@ impl PluginParams<'_> {
 
 /// An effect plug-in.
 pub trait EffectPlugin: Send + Sync {
+    /// Whether an external native renderer can negotiate GPU execution on this
+    /// host. This does not route the effect to the built-in WGSL shader registry.
+    fn native_gpu_available(&self) -> bool {
+        false
+    }
     fn manifest(&self) -> &PluginManifest;
     /// Whether this plugin preserves floating-point/HDR pixels (the 32 bpc catalog filter).
     fn supports_float(&self) -> bool {

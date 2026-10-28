@@ -191,9 +191,14 @@ pub fn render(entry: Entry, input: &mut ae::PF_InData, out: &mut ae::PF_OutData,
     if code != 0 {
         return code;
     }
+    // SmartFX may use out_data.frame_data as well as pre_render_data. It is
+    // produced by pre-render and must be visible during the matching render.
+    input.frame_data = out.frame_data;
     let r = pre_out.result_rect;
     if r.left < 0 || r.top < 0 || r.right > world.width || r.bottom > world.height || r.left > r.right || r.top > r.bottom {
-        event(json!({"stage":"unsupported_callback","name":"expanded_smart_output"}));
+        event(
+            json!({"stage":"unsupported_callback","name":"expanded_smart_output","result":[r.left,r.top,r.right,r.bottom],"requested":[0,0,world.width,world.height]}),
+        );
         return ae::PF_Err_BAD_CALLBACK_PARAM;
     }
     let mut smart_in: ae::PF_SmartRenderInput = unsafe { std::mem::zeroed() };
@@ -208,6 +213,50 @@ pub fn render(entry: Entry, input: &mut ae::PF_InData, out: &mut ae::PF_OutData,
 #[cfg(test)]
 mod tests {
     use super::*;
+    unsafe extern "C" fn frame_fixture(
+        command: i32,
+        input: *mut ae::PF_InData,
+        out: *mut ae::PF_OutData,
+        _: ae::PF_ParamList,
+        _: *mut ae::PF_LayerDef,
+        extra: *mut c_void,
+    ) -> i32 {
+        if command == ae::PF_Cmd_SMART_PRE_RENDER {
+            let pre = unsafe { &mut *extra.cast::<ae::PF_PreRenderExtra>() };
+            let request = unsafe { (*pre.input).output_request.rect };
+            unsafe {
+                (*pre.output).result_rect = request;
+                (*pre.output).max_result_rect = request;
+                (*out).frame_data = (*input).global_data;
+                if (*input).width == 100 {
+                    (*pre.output).result_rect.left = -10;
+                }
+            }
+            return 0;
+        }
+        if command == ae::PF_Cmd_SMART_RENDER {
+            return if unsafe { (*input).frame_data == (*input).global_data } { 0 } else { ae::PF_Err_BAD_CALLBACK_PARAM };
+        }
+        ae::PF_Err_INVALID_CALLBACK
+    }
+    #[test]
+    fn smart_frame_data_reaches_render_and_expanded_requests_fail_before_render() {
+        unsafe {
+            let mut input: ae::PF_InData = std::mem::zeroed();
+            input.effect_ref = ptr::dangling_mut();
+            input.global_data = ptr::dangling_mut();
+            input.width = 3;
+            input.height = 2;
+            let mut out = std::mem::zeroed();
+            let mut world: ae::PF_EffectWorld = std::mem::zeroed();
+            world.width = 3;
+            world.height = 2;
+            assert_eq!(render(frame_fixture, &mut input, &mut out, &mut world), 0);
+            assert_eq!(input.frame_data, input.global_data);
+            input.width = 100;
+            assert_eq!(render(frame_fixture, &mut input, &mut out, &mut world), ae::PF_Err_BAD_CALLBACK_PARAM);
+        }
+    }
     #[test]
     fn clips_empty_and_partial_requests_without_overflow() {
         let full = ae::PF_LRect { left: 0, top: 0, right: 32, bottom: 16 };

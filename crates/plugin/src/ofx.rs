@@ -21,6 +21,132 @@ const MAX_PIXELS: u32 = 16 * 1024 * 1024;
 const MAX_DESCRIPTOR_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FRAME_STORE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_IDLE_HELPERS: usize = 2;
+
+/// Enrich old registrations from data retained by an already-run helper. This never
+/// starts a helper, opens a vendor binary or writes a profile/cache file.
+pub(crate) fn enrich_profile(profile: &mut Value) -> Result<bool, String> {
+    if profile["experimental_ofx"] != true {
+        return Ok(false);
+    }
+    let needs_units = profile["parameterSemantics"].is_null();
+    let needs_gpu = profile["gpu"].is_null();
+    if !needs_units && !needs_gpu {
+        return Ok(false);
+    }
+    let id = profile["remote"]["manifest"]["id"].as_str().ok_or("OFX profile has no native effect identity")?;
+    let device = id.split('.').next().unwrap_or_default().to_ascii_lowercase();
+    let reserved = matches!(device.as_str(), "con" | "prn" | "aux" | "nul")
+        || device
+            .strip_prefix("com")
+            .or_else(|| device.strip_prefix("lpt"))
+            .is_some_and(|n| n.len() == 1 && n.as_bytes().first().is_some_and(|b| (b'1'..=b'9').contains(b)));
+    if id.is_empty()
+        || id.len() > 256
+        || matches!(id, "." | "..")
+        || reserved
+        || !id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        || profile["manifest"]["id"].as_str().and_then(|s| s.strip_prefix("ofx.")) != Some(id)
+    {
+        return Err("OFX profile identities cannot select a safe metadata file".into());
+    }
+    let state = profile["state_dir"].as_str().map(Path::new).ok_or("OFX profile has no metadata state folder")?;
+    if !state.is_absolute() || state.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("OFX metadata state folder must be an absolute path without parent traversal".into());
+    }
+    let state = state.canonicalize().map_err(|e| format!("OFX metadata state folder is unavailable: {e}"))?;
+    let directory = state.join("ofx-descriptors").canonicalize().map_err(|e| format!("OFX cached descriptors are unavailable: {e}"))?;
+    if directory == state || !directory.starts_with(&state) {
+        return Err("OFX metadata directory resolves outside its state folder".into());
+    }
+    let path = directory.join(format!("{id}.json")).canonicalize().map_err(|e| format!("OFX cached descriptor is unavailable: {e}"))?;
+    if path.parent() != Some(directory.as_path()) {
+        return Err("OFX metadata file resolves outside its descriptor folder".into());
+    }
+    let file = fs::File::open(path).map_err(|e| format!("Cannot open OFX cached descriptor: {e}"))?;
+    let info = file.metadata().map_err(|e| format!("Cannot inspect OFX cached descriptor: {e}"))?;
+    if !info.is_file() || info.len() > MAX_DESCRIPTOR_BYTES as u64 {
+        return Err("OFX cached descriptor must be a regular file no larger than 8 MiB".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_DESCRIPTOR_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| format!("Cannot read OFX cached descriptor: {e}"))?;
+    if bytes.len() > MAX_DESCRIPTOR_BYTES {
+        return Err("OFX cached descriptor exceeds 8 MiB".into());
+    }
+    let metadata: Value = serde_json::from_slice(&bytes).map_err(|e| format!("Invalid OFX cached descriptor: {e}"))?;
+    if metadata["id"].as_str() != Some(id) {
+        return Err("OFX cached descriptor belongs to another effect".into());
+    }
+    let units = if needs_units {
+        validate_semantics(&metadata["parameterSemantics"], &profile["remote"]["manifest"]["params"])?;
+        Some(metadata["parameterSemantics"].clone())
+    } else {
+        None
+    };
+    let gpu = if needs_gpu { Some(validated_gpu(&metadata)?) } else { None };
+    // Validate every requested field first; a failed enrichment leaves the profile intact.
+    let object = profile.as_object_mut().ok_or("OFX registration must be an object")?;
+    if let Some(units) = units {
+        object.insert("parameterSemantics".into(), units);
+    }
+    if let Some(gpu) = gpu {
+        object.insert("gpu".into(), gpu);
+    }
+    Ok(true)
+}
+
+fn validate_semantics(units: &Value, params: &Value) -> Result<(), String> {
+    let fields = units.as_object().filter(|v| v.len() <= 2048).ok_or("OFX parameter semantics must be a bounded object")?;
+    let params = params.as_array().filter(|v| v.len() <= 2048).ok_or("OFX remote parameters must be a bounded array")?;
+    let ids: std::collections::BTreeSet<_> = params.iter().filter_map(|p| p["id"].as_str()).collect();
+    for (id, value) in fields {
+        if id.len() > 256 || !ids.contains(id.as_str()) {
+            return Err("OFX cached parameter semantics do not match the registered parameter layout".into());
+        }
+        let value = value.as_object().filter(|v| v.len() <= 10).ok_or("OFX parameter semantics entry must be a bounded object")?;
+        for (key, data) in value {
+            let valid = match key.as_str() {
+                "ofxName" | "type" | "doubleType" | "coordinates" => data.is_null() || data.as_str().is_some_and(|s| s.len() <= 1024),
+                "default" | "min" | "max" | "displayMin" | "displayMax" => {
+                    data.as_array().is_some_and(|v| v.len() <= 4 && v.iter().all(|n| n.is_null() || n.as_f64().is_some_and(f64::is_finite)))
+                }
+                "choices" => data.as_array().is_some_and(|v| v.len() <= 4096 && v.iter().all(|s| s.as_str().is_some_and(|s| s.len() <= 1024))),
+                _ => false,
+            };
+            if !valid {
+                return Err("OFX cached parameter semantics contain an unsupported field or value shape".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validated_gpu(metadata: &Value) -> Result<Value, String> {
+    for name in ["openGL", "cuda", "openCL"] {
+        let value = &metadata[name];
+        if !value.is_null() && !value.is_boolean() && !value.as_str().is_some_and(|s| s.len() <= 64) {
+            return Err("OFX cached GPU declarations have an invalid value shape".into());
+        }
+    }
+    let depths = &metadata["openGLDepths"];
+    if !depths.is_null() && !depths.as_array().is_some_and(|v| v.len() <= 16 && v.iter().all(|s| s.as_str().is_some_and(|s| s.len() <= 128))) {
+        return Err("OFX cached OpenGL depths have an invalid value shape".into());
+    }
+    let host = metadata["hostGpu"].as_object().filter(|v| v.len() <= 8).ok_or("OFX cached GPU host information is unavailable")?;
+    if !metadata["hostGpu"]["available"].is_boolean() {
+        return Err("OFX cached GPU host availability must be a boolean".into());
+    }
+    for (key, data) in host {
+        let valid = match key.as_str() {
+            "available" | "disabled" => data.is_boolean(),
+            "backend" | "vendor" | "renderer" | "version" | "reason" => data.as_str().is_some_and(|s| s.len() <= 4096),
+            _ => false,
+        };
+        if !valid {
+            return Err("OFX cached GPU host information has an unsupported field or value shape".into());
+        }
+    }
+    Ok(json!({"openGL":metadata["openGL"],"cuda":metadata["cuda"],"openCL":metadata["openCL"],"openGLDepths":depths,"host":metadata["hostGpu"]}))
+}
 static ACTIVE_HELPERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 struct HelperPermit;
 impl HelperPermit {
@@ -52,6 +178,10 @@ struct Descriptor {
     state_dir: PathBuf,
     manifest: PluginManifest,
     remote: Value,
+    #[serde(default, rename = "parameterSemantics")]
+    _parameter_semantics: Value,
+    #[serde(default, rename = "gpu")]
+    gpu: Value,
 }
 struct RemoteEffect {
     descriptor: Descriptor,
@@ -215,18 +345,25 @@ pub(crate) fn descriptor(remote: &Value, worker: &Path, plugin: &Path, state: &P
         version: raw["version"].as_str().unwrap_or_default().into(),
         author: raw["author"].as_str().unwrap_or_default().into(),
         description:
-            "Experimental OFX helper. CPU float frames and basic controls; temporal/layer inputs, expanded bounds, custom UI and native GPU are unavailable."
+            "Experimental OFX helper with CPU frames, temporal inputs and automatic Windows OpenGL for compatible plug-ins. Custom UI and native CUDA/Metal host APIs are unavailable."
                 .into(),
         params,
     };
     manifest.validate()?;
-    Ok(json!({"experimental_ofx":true,"worker":worker,"plugin":plugin,"state_dir":state,"manifest":manifest,"remote":remote}))
+    let mut profile = json!({"experimental_ofx":true,"worker":worker,"plugin":plugin,"state_dir":state,"manifest":manifest,"remote":remote});
+    // Missing optional cache data does not prevent ordinary CPU registration.
+    let _ = enrich_profile(&mut profile);
+    Ok(profile)
 }
-pub(crate) fn load(bytes: &[u8], source: &str) -> Result<&'static effectcraft_effects::EffectSpec, String> {
+pub(crate) fn load(bytes: &[u8], source: &str) -> Result<(&'static effectcraft_effects::EffectSpec, Value), String> {
     if bytes.len() > MAX_DESCRIPTOR_BYTES {
         return Err("OFX descriptor exceeds 8 MiB".into());
     }
-    let mut descriptor: Descriptor = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let mut profile: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    // Deferred registrations stay quiet at startup. The importer reports missing cache
+    // data once per plugin/state folder with explicit rescan advice.
+    let _ = enrich_profile(&mut profile);
+    let mut descriptor: Descriptor = serde_json::from_value(profile).map_err(|e| e.to_string())?;
     descriptor.worker = crate::bundled_worker(descriptor.worker, "effectcraft-helper-ofx.exe");
     if !descriptor.manifest.name.ends_with(" [OFX]") {
         descriptor.manifest.name.push_str(" [OFX]");
@@ -243,7 +380,9 @@ pub(crate) fn load(bytes: &[u8], source: &str) -> Result<&'static effectcraft_ef
     {
         return Err("Invalid OFX helper/plugin/state paths".into());
     }
-    register_plugin(Arc::new(RemoteEffect { descriptor, source: source.into() }))
+    let gpu = descriptor.gpu.clone();
+    let spec = register_plugin(Arc::new(RemoteEffect { descriptor, source: source.into() }))?;
+    Ok((spec, gpu))
 }
 struct PoolEntry {
     worker: PathBuf,
@@ -483,6 +622,14 @@ impl RemoteEffect {
     }
 }
 impl EffectPlugin for RemoteEffect {
+    fn native_gpu_available(&self) -> bool {
+        let gpu = &self.descriptor.gpu;
+        let forced_cpu = std::env::var("AFTERCRAFT_OFX_GPU").is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "off" | "false" | "cpu"));
+        !forced_cpu
+            && gpu["host"]["available"] == true
+            && gpu["host"]["disabled"] != true
+            && (gpu["openGL"] == "true" || gpu["openGL"] == "needed" || gpu["openGL"] == true)
+    }
     fn manifest(&self) -> &PluginManifest {
         &self.descriptor.manifest
     }
@@ -494,6 +641,116 @@ impl EffectPlugin for RemoteEffect {
     }
     fn render_with_context(&self, frame: &mut PluginFrame, params: &PluginParams, ctx: &effectcraft_effects::EffectCtx) -> Result<(), String> {
         self.process(frame, params, ctx.time, Some(ctx))
+    }
+}
+
+#[cfg(test)]
+mod profile_metadata_tests {
+    use super::*;
+
+    fn fixture(id: &str) -> (tempfile::TempDir, Value, Value, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let cache = state.join("ofx-descriptors");
+        fs::create_dir_all(&cache).unwrap();
+        let worker = dir.path().join("effectcraft-helper-ofx.exe");
+        let plugin = dir.path().join("fixture.ofx");
+        fs::write(&worker, b"original metadata-only fixture; never executed").unwrap();
+        fs::write(&plugin, b"original plugin-path fixture; never executed").unwrap();
+        let param = json!({"id":"gain","name":"Gain","type":"slider","default":1.0,"min":0,"max":2});
+        let profile = json!({
+            "experimental_ofx":true,"worker":worker,"plugin":plugin,"state_dir":state,
+            "manifest":{"api":1,"id":format!("ofx.{id}"),"name":"Cached GPU","category":"Test","params":[param.clone()]},
+            "remote":{"manifest":{"api":1,"id":id,"name":"Cached GPU","category":"Test","params":[param]},"padding":false}
+        });
+        let metadata = json!({
+            "id":id,"ofxId":id,"openGL":"true","cuda":null,"openCL":null,"openGLDepths":["OfxBitDepthFloat"],
+            "hostGpu":{"available":true,"backend":"opengl","renderer":"Synthetic metadata fixture","disabled":false},
+            "parameterSemantics":{"gain":{"ofxName":"gain","type":"OfxParamTypeDouble","doubleType":"OfxParamDoubleTypePlain","coordinates":null,
+                "default":[1.0],"min":[0.0],"max":[2.0],"displayMin":[0.0],"displayMax":[2.0],"choices":[]}}
+        });
+        let path = cache.join(format!("{id}.json"));
+        fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        (dir, profile, metadata, path)
+    }
+
+    #[test]
+    fn legacy_profile_enrichment_is_read_only_and_preserves_existing_fields() {
+        let (dir, mut profile, metadata, cache) = fixture("org.test.cached_units");
+        let disk_profile = dir.path().join("old.ecofx.json");
+        let before = serde_json::to_vec(&profile).unwrap();
+        fs::write(&disk_profile, &before).unwrap();
+        assert!(crate::enrich_native_profile(&mut profile).unwrap());
+        assert_eq!(profile["parameterSemantics"], metadata["parameterSemantics"]);
+        assert_eq!(profile["gpu"]["host"], metadata["hostGpu"]);
+        assert_eq!(fs::read(&disk_profile).unwrap(), before, "enrichment must never rewrite a user registration");
+        fs::write(cache, b"corrupt after first enrichment").unwrap();
+        let enriched = profile.clone();
+        assert!(!enrich_profile(&mut profile).unwrap(), "complete profiles need no cache access");
+        assert_eq!(profile, enriched);
+    }
+
+    #[test]
+    fn only_absent_or_null_fields_are_filled() {
+        let (_dir, mut profile, metadata, _) = fixture("org.test.kept_gpu");
+        let gpu = json!({"host":{"available":false},"manual":"preserve"});
+        profile["gpu"] = gpu.clone();
+        profile["parameterSemantics"] = Value::Null;
+        assert!(enrich_profile(&mut profile).unwrap());
+        assert_eq!(profile["gpu"], gpu);
+        assert_eq!(profile["parameterSemantics"], metadata["parameterSemantics"]);
+    }
+
+    #[test]
+    fn mismatched_or_malformed_cache_does_not_partially_change_a_profile() {
+        let (_dir, profile, metadata, path) = fixture("org.test.wrong_cache");
+        for (field, replacement) in [
+            ("id", json!("org.test.other")),
+            ("parameterSemantics", json!({"unknown":{"doubleType":"OfxParamDoubleTypePlain"}})),
+            ("parameterSemantics", json!({"gain":{"doubleType":["wrong shape"]}})),
+            ("parameterSemantics", json!({"gain":{"default":["not a number"]}})),
+            ("hostGpu", json!({"available":"true"})),
+            ("hostGpu", json!({"available":true,"privateUnexpectedField":"reject"})),
+        ] {
+            let mut record = metadata.clone();
+            record[field] = replacement;
+            fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+            let mut candidate = profile.clone();
+            assert!(enrich_profile(&mut candidate).is_err(), "{field}");
+            assert_eq!(candidate, profile, "failed enrichment must be atomic");
+        }
+    }
+
+    #[test]
+    fn missing_oversized_traversing_or_mismatched_profile_identities_are_rejected() {
+        let (_dir, profile, _, path) = fixture("org.test.safe_path");
+        fs::File::create(&path).unwrap().set_len(MAX_DESCRIPTOR_BYTES as u64 + 1).unwrap();
+        assert!(enrich_profile(&mut profile.clone()).unwrap_err().contains("8 MiB"));
+        fs::remove_file(&path).unwrap();
+        assert!(enrich_profile(&mut profile.clone()).unwrap_err().contains("unavailable"));
+        for id in ["../escape", "..", "org/test", "CON", "LPT1", "org:test"] {
+            let mut candidate = profile.clone();
+            candidate["remote"]["manifest"]["id"] = json!(id);
+            candidate["manifest"]["id"] = json!(format!("ofx.{id}"));
+            assert!(enrich_profile(&mut candidate).unwrap_err().contains("safe metadata file"));
+        }
+        let mut mismatch = profile.clone();
+        mismatch["manifest"]["id"] = json!("ofx.org.test.different");
+        assert!(enrich_profile(&mut mismatch).is_err());
+        let mut traversal = profile;
+        traversal["state_dir"] = json!(path.parent().unwrap().join("../outside"));
+        assert!(enrich_profile(&mut traversal).unwrap_err().contains("parent traversal"));
+    }
+
+    #[test]
+    fn loader_reports_enriched_gpu_capabilities_without_executing_a_helper() {
+        let (_dir, profile, metadata, _) = fixture("org.test.cached_gpu_read_only");
+        let result = crate::loader(&serde_json::to_vec(&profile).unwrap(), "legacy.ecofx.json").unwrap();
+        assert_eq!(result["nativeGpuCapabilities"]["host"], metadata["hostGpu"]);
+        assert_eq!(result["nativeGpuCapabilities"]["openGL"], "true");
+        assert_eq!(result["id"], "ofx.org.test.cached_gpu_read_only");
+        // The worker and bundle above contain plain text. Registration would fail if it
+        // tried to execute them; actual hardware initialization belongs to rendering.
     }
 }
 
@@ -545,7 +802,7 @@ mod tests {
         let bytes = serde_json::to_vec(&large).unwrap();
         assert!(bytes.len() > 1024 * 1024);
         let loaded = load(&bytes, "large.ecofx.json").unwrap();
-        assert!(loaded.name.ends_with(" [OFX]"));
+        assert!(loaded.0.name.ends_with(" [OFX]"));
         assert!(load(&vec![0; MAX_DESCRIPTOR_BYTES + 1], "oversized.ecofx.json").err().unwrap().contains("8 MiB"));
         let source = [[0.2, 0.3, 0.4, 1.0], [2.0, 0.1, 0.2, 1.0]];
         let run = |effect: &Arc<dyn EffectPlugin>, values: &[f64]| {

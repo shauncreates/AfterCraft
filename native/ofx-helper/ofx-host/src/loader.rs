@@ -47,6 +47,35 @@ fn loaded_cache() -> &'static Mutex<HashMap<PathBuf, Vec<LoadedEffect>>> {
     L.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn metadata_cache() -> &'static Mutex<HashMap<String, serde_json::Value>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Declared native capabilities and parameter unit semantics, separate from the stable manifest.
+pub fn metadata(id: &str) -> Option<serde_json::Value> {
+    metadata_cache().lock().unwrap_or_else(PoisonError::into_inner).get(id).cloned()
+}
+
+fn retain_metadata(id: &str, record: serde_json::Value) {
+    metadata_cache().lock().unwrap_or_else(PoisonError::into_inner).insert(id.to_string(), record.clone());
+    // Existing protocol-v1 manifests cannot carry extra fields. Retain the descriptor in the
+    // helper's own state folder before replying to load, so scanning can persist unit metadata
+    // without a second vendor-library load. A malformed/interrupted cache is safely ignored by
+    // the client and regenerated on the next load.
+    if let Some(state) = crate::blocklist::state_dir() {
+        let result = (|| -> Result<(), String> {
+            let dir = state.join("ofx-descriptors");
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let bytes = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
+            std::fs::write(dir.join(format!("{id}.json")), bytes).map_err(|e| e.to_string())
+        })();
+        if let Err(error) = result {
+            log::warn!("openfx: cannot retain descriptor units for {id}: {error}");
+        }
+    }
+}
+
 /// Standard OFX locations for this OS plus every entry of `OFX_PLUGIN_PATH`.
 pub fn default_search_paths() -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = Vec::new();
@@ -383,6 +412,18 @@ fn describe_plugin(ptr: *mut OfxPlugin, bin: &Path, bundle: &str, lock: Arc<Mute
         params: mapped.params,
     };
     let source = bin.to_string_lossy().into_owned();
+    retain_metadata(
+        &id,
+        serde_json::json!({
+            "id":id,"ofxId":ofx_id,
+            "openGL":desc.props.str(IE_OPENGL_RENDER_SUPPORTED),
+            "cuda":desc.props.str("OfxImageEffectPropCudaRenderSupported"),
+            "openCL":desc.props.str("OfxImageEffectPropOpenCLRenderSupported"),
+            "openGLDepths":desc.props.strs("OfxOpenGLPropPixelDepth"),
+            "hostGpu":crate::opengl::info(),
+            "parameterSemantics":mapped.bindings.semantics(&desc.params,&manifest.params)
+        }),
+    );
     let effect = OfxEffect::new(manifest, entry, cfg, desc, mapped.bindings, source);
     register_plugin(Arc::new(effect)).map_err(|e| format!("{ofx_id}: {e}"))?;
     Ok(Some(LoadedEffect { id, name, category, ofx_id, context: short_context(context).to_string(), bundle: bundle.to_string() }))

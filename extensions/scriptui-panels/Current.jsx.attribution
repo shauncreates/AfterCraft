@@ -1,0 +1,7 @@
+asset:        Current.jsx
+title:        Current portable ScriptUI curve editor and original easing presets
+author:       AfterCraft contributors
+source:       original work
+license:      MIT OR Apache-2.0
+added:        2026-10-27 by AfterCraft contributors
+notes:        Original Bezier, damped motion functions, graph drawing and preset data; public ScriptUI/keyframe APIs only. No Flow, MFlow or Adobe implementation code or artwork is included.

@@ -1235,6 +1235,7 @@ Window
   Tools | window.panel {"panel":"tools"} | Cmd+1
   Tracker | window.panel {"panel":"tracker"}
   Wiggler | window.panel {"panel":"wiggler"}
+  Current | window.panel {"panel":"current"}
   ---
   Composition | window.panel {"panel":"composition"}
   Effect Controls | window.panel {"panel":"effectControls"} | F3, Cmd+Shift+T

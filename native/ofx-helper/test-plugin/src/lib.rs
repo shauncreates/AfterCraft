@@ -11,6 +11,7 @@
 //! Float RGBA only. Rows are addressed through `OfxImagePropRowBytes` (which may be negative).
 
 mod ffi;
+mod gpu;
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -25,8 +26,20 @@ const ECHO: usize = 1;
 const BORDER: usize = 2;
 const MIX: usize = 3;
 const ALL_PARAMS: usize = 4;
+const GPU_COPY: usize = 5;
+const GPU_FALLBACK: usize = 6;
+const GPU_UNLICENSED: usize = 7;
 
-const LABELS: [&CStr; 5] = [c"EC Test Invert", c"EC Test Echo", c"EC Test Border", c"EC Test Mix", c"EC Test All Params"];
+const LABELS: [&CStr; 8] = [
+    c"EC Test Invert",
+    c"EC Test Echo",
+    c"EC Test Border",
+    c"EC Test Mix",
+    c"EC Test All Params",
+    c"EC Test GPU Copy",
+    c"EC Test GPU Fallback",
+    c"EC Test GPU Unlicensed",
+];
 
 static HOST: AtomicPtr<OfxHost> = AtomicPtr::new(null_mut());
 static SUITES: OnceLock<Suites> = OnceLock::new();
@@ -59,12 +72,15 @@ macro_rules! plug {
     };
 }
 
-static PLUGINS: [Plug; 5] = [
+static PLUGINS: [Plug; 8] = [
     plug!(c"org.effectcraft.test.Invert", INVERT),
     plug!(c"org.effectcraft.test.Echo", ECHO),
     plug!(c"org.effectcraft.test.Border", BORDER),
     plug!(c"org.effectcraft.test.Mix", MIX),
     plug!(c"org.effectcraft.test.AllParams", ALL_PARAMS),
+    plug!(c"org.effectcraft.test.GpuCopy", GPU_COPY),
+    plug!(c"org.effectcraft.test.GpuFallback", GPU_FALLBACK),
+    plug!(c"org.effectcraft.test.GpuUnlicensed", GPU_UNLICENSED),
 ];
 
 #[unsafe(no_mangle)]
@@ -98,6 +114,8 @@ unsafe fn dispatch(k: usize, action: &[u8], effect: Effect, in_args: Props, out_
             b"OfxImageEffectActionDescribeInContext" => describe_in_context(k, effect),
             b"OfxImageEffectActionGetRegionOfDefinition" if k == BORDER => border_rod(effect, in_args, out_args),
             b"OfxImageEffectActionRender" => render(k, effect, in_args),
+            b"OfxActionOpenGLContextAttached" if k >= GPU_COPY => gpu::attached(),
+            b"kOfxActionOpenGLContextDetached" if k >= GPU_COPY => gpu::detached(),
             _ => REPLY_DEFAULT,
         }
     }
@@ -115,6 +133,10 @@ unsafe fn describe(k: usize, effect: Effect) -> Status {
         s.set_str(p, c"OfxImageEffectPluginRenderThreadSafety", 0, c"OfxImageEffectRenderFullySafe");
         s.set_int(p, c"OfxImageEffectPropSupportsTiles", 0, 0);
         s.set_int(p, c"OfxImageEffectPropTemporalClipAccess", 0, (k == ECHO) as c_int);
+        if k >= GPU_COPY {
+            s.set_str(p, c"OfxImageEffectPropOpenGLRenderSupported", 0, if k == GPU_COPY { c"needed" } else { c"true" });
+            s.set_str(p, c"OfxOpenGLPropPixelDepth", 0, c"OfxBitDepthFloat");
+        }
     }
     OK
 }
@@ -335,6 +357,15 @@ unsafe fn border_rod(effect: Effect, in_args: Props, out_args: Props) -> Status 
 
 unsafe fn render(k: usize, effect: Effect, in_args: Props) -> Status {
     let s = suites();
+    if k >= GPU_COPY {
+        let active = unsafe { s.get_int(in_args, c"OfxImageEffectPropOpenGLEnabled", 0) } == Some(1);
+        if active {
+            return unsafe { gpu::render(k, effect, in_args) };
+        }
+        if k == GPU_COPY {
+            return FAILED;
+        }
+    }
     unsafe {
         let time = s.get_dbl(in_args, c"OfxPropTime", 0).unwrap_or(0.0);
         let mut win = [0; 4];
@@ -370,10 +401,9 @@ unsafe fn render(k: usize, effect: Effect, in_args: Props) -> Status {
                 // The source's region of definition in pixels; everything outside it is red.
                 let mut r = RectD::default();
                 (s.fx.clip_get_region_of_definition)(src_clip, time, &mut r);
-                let rect = [(r.x1 * scale[0]).floor() as i32, (r.y1 * scale[1]).floor() as i32, (r.x2 * scale[0]).ceil() as i32, (r.y2 * scale[1]).ceil() as i32];
-                Box::new(move |x, y| {
-                    if x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3] { at(&src, x, y) } else { [1.0, 0.0, 0.0, 1.0] }
-                })
+                let rect =
+                    [(r.x1 * scale[0]).floor() as i32, (r.y1 * scale[1]).floor() as i32, (r.x2 * scale[0]).ceil() as i32, (r.y2 * scale[1]).ceil() as i32];
+                Box::new(move |x, y| if x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3] { at(&src, x, y) } else { [1.0, 0.0, 0.0, 1.0] })
             }
             MIX => {
                 let matte_clip = clip(effect, c"Matte");

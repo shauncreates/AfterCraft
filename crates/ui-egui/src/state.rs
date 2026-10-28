@@ -682,6 +682,9 @@ pub struct UiState {
     /// Wiggler / Smoother / Motion Sketch settings.
     #[serde(default)]
     pub anim_tools: AnimToolsState,
+    /// Current's curve editor state (Window > Current).
+    #[serde(default)]
+    pub current: crate::panels::current::CurrentState,
     /// Composition Mini-Flowchart popup position (open when set).
     #[serde(default)]
     pub mini_flowchart: Option<[f32; 2]>,
@@ -745,6 +748,7 @@ impl Default for UiState {
             layer_zoom: None,
             layer_pan: [0.0, 0.0],
             anim_tools: AnimToolsState::default(),
+            current: Default::default(),
             mini_flowchart: None,
             flowchart: Default::default(),
             scopes: Default::default(),

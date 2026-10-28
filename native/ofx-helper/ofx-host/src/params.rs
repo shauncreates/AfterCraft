@@ -368,6 +368,49 @@ pub struct CoordCtx {
 }
 
 impl Bindings {
+    /// Descriptor units retained separately from the display manifest for project translators.
+    /// Keys are the exposed stable parameter IDs, even for split vector components.
+    pub fn semantics(&self, set: &ParamSet, params: &[PluginParam]) -> serde_json::Value {
+        let mut values = serde_json::Map::new();
+        let (mut flat, mut text) = (0usize, 0usize);
+        for p in params {
+            let is_text = matches!(p.kind, PluginParamKind::Text { .. } | PluginParamKind::Hidden { .. });
+            let binding = self.items.iter().find(|b| match b.src {
+                Src::Flat { at, n } => !is_text && flat >= at && flat < at.saturating_add(n),
+                Src::Pos { at, with_z, .. } => !is_text && flat >= at && flat < at.saturating_add(if with_z { 3 } else { 2 }),
+                Src::Text { at } => is_text && text == at,
+            });
+            if let Some(b) = binding {
+                // SAFETY: descriptor parameter boxes remain alive for the owning effect.
+                if let Some(q) = set.find(&b.name).and_then(|ptr| unsafe { ptr.as_ref() }) {
+                    values.insert(
+                        p.id.clone(),
+                        serde_json::json!({
+                            "ofxName":b.name,"type":q.kind.type_name(),
+                            "doubleType":q.props.str(PP_DOUBLE_TYPE),
+                            "coordinates":q.props.str("OfxParamPropDefaultCoordinateSystem"),
+                            "default":q.props.doubles(PP_DEFAULT),
+                            "min":q.props.doubles(PP_MIN),"max":q.props.doubles(PP_MAX),
+                            "displayMin":q.props.doubles(PP_DISPLAY_MIN),"displayMax":q.props.doubles(PP_DISPLAY_MAX),
+                            "choices":q.props.strs(PP_CHOICE_OPTION)
+                        }),
+                    );
+                }
+            }
+            if is_text {
+                text += 1;
+            } else {
+                flat += match p.kind {
+                    PluginParamKind::Point { .. } => 2,
+                    PluginParamKind::Point3 { .. } => 3,
+                    PluginParamKind::Color { .. } => 4,
+                    _ => 1,
+                };
+            }
+        }
+        serde_json::Value::Object(values)
+    }
+
     /// OFX values for every exposed parameter, by OFX name.
     pub fn decode(&self, flat: &[f64], texts: &[String], cc: &CoordCtx) -> HashMap<String, Vec<PVal>> {
         let mut out = HashMap::new();

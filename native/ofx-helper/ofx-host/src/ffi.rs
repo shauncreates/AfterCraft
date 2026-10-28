@@ -2,7 +2,7 @@
 //!
 //! Transcribed by hand from the OpenFX 1.4/1.5 public headers (`ofxCore.h`, `ofxProperty.h`,
 //! `ofxParam.h`, `ofxImageEffect.h`, `ofxMemory.h`, `ofxMultiThread.h`, `ofxMessage.h`,
-//! `ofxInteract.h`, `ofxProgress.h`, `ofxTimeLine.h`, `ofxPixels.h`), which are
+//! `ofxInteract.h`, `ofxProgress.h`, `ofxTimeLine.h`, `ofxPixels.h`, `ofxGPURender.h`), which are
 //! Copyright OpenFX and contributors to the OpenFX project, licensed BSD-3-Clause
 //! (<https://github.com/AcademySoftwareFoundation/openfx>). Only the interface (names, layouts and
 //! numbers the specification fixes) is reproduced; no host implementation code is copied from
@@ -50,6 +50,21 @@ pub const K_STAT_REPLY_NO: OfxStatus = 13;
 pub const K_STAT_REPLY_DEFAULT: OfxStatus = 14;
 pub const K_STAT_UNLICENSED: OfxStatus = 15;
 pub const K_STAT_ERR_IMAGE_FORMAT: OfxStatus = 1000;
+pub const K_STAT_GPU_OUT_OF_MEMORY: OfxStatus = 1001;
+pub const K_STAT_GPU_RENDER_FAILED: OfxStatus = 1002;
+
+/// OpenFX public ofxGPURender.h texture suite (BSD-3-Clause).
+#[repr(C)]
+pub struct OfxImageEffectOpenGLRenderSuiteV1 {
+    pub clip_load_texture: extern "C" fn(Handle, f64, *const c_char, *const OfxRectD, *mut Handle) -> OfxStatus,
+    pub clip_free_texture: extern "C" fn(Handle) -> OfxStatus,
+    pub flush_resources: extern "C" fn() -> OfxStatus,
+}
+pub const SUITE_OPENGL: &str = "OfxImageEffectOpenGLRenderSuite";
+pub const GL_TEXTURE_INDEX: &str = "OfxImageEffectPropOpenGLTextureIndex";
+pub const GL_TEXTURE_TARGET: &str = "OfxImageEffectPropOpenGLTextureTarget";
+pub const ACT_GL_ATTACHED: &str = "OfxActionOpenGLContextAttached";
+pub const ACT_GL_DETACHED: &str = "kOfxActionOpenGLContextDetached";
 
 /// `OfxRangeD`.
 #[repr(C)]

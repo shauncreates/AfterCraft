@@ -9,6 +9,84 @@ def prop(name,match_name='p',**kwargs):return N(name=name,match_name=match_name,
 def catalog(effect):return c.Catalog(dict(preferredEdition='ofx',effects=[effect],nativeProfiles=[]))
 
 class ConverterTests(unittest.TestCase):
+    def test_builtin_keylight_wins_over_a_registered_adobe_copy(self):
+        native=dict(id='vendor.keylight',name='Keylight [Adobe]',params=[])
+        builtin=dict(id='ec.keying.keylight',name='Key Light',params=[])
+        cat=c.Catalog(dict(preferredEdition='ofx',effects=[native,builtin],nativeProfiles=[
+            dict(match_name='Keylight 906',manifest=native)]))
+        self.assertEqual(cat.effect(fx('Keylight 906'))['id'],builtin['id'])
+
+    def test_ofx_preference_falls_back_to_aex_and_uses_disk_identity(self):
+        effect=dict(id='vendor.aex.twitch',name='Twitch [Adobe]',params=[
+            dict(id='p1',name='Amount',type='slider'),dict(id='p27',name='Amount',type='slider')])
+        cat=c.Catalog(dict(preferredEdition='ofx',effects=[effect],nativeProfiles=[
+            dict(match_name='Original Twitch',manifest=effect,parameter_match_names={'p1':'Original Twitch-0002','p27':'Original Twitch-0027'})]))
+        self.assertEqual(cat.effect(fx('Original Twitch'))['id'],effect['id'])
+        mapped,_,_=cat.parameter(fx('Original Twitch'),prop('Amount','Original Twitch-0002'),effect)
+        self.assertEqual(mapped['id'],'p1')
+
+    def test_normalized_shake_distance_scales_values_keys_and_speed(self):
+        effect=dict(id='ofx.com.genarts.sapphire.distort.s_shake',name='S_Shake [OFX]',
+                    params=[dict(id='X_Rand_Amp',name='X Rand Amp',type='slider')],
+                    parameterSemantics={'X_Rand_Amp':{'doubleType':'OfxParamDoubleTypeNormalisedX'}})
+        cat=catalog(effect)
+        key=N(value=192,in_temporal_ease=[N(speed=108,influence=70)],out_temporal_ease=[])
+        source=prop('X Rand Amp',value=192,keyframes=[key])
+        mapped,_,scale=cat.parameter(fx('S_Shake'),source,effect,(1080,720))
+        self.assertEqual(mapped['id'],'X_Rand_Amp')
+        proxy=c.ScaledProperty(source,scale)
+        self.assertAlmostEqual(proxy.value,192/1080)
+        self.assertAlmostEqual(proxy.keyframes[0].value,192/1080)
+        self.assertAlmostEqual(proxy.keyframes[0].in_temporal_ease[0].speed,.1)
+        self.assertIsNone(cat.parameter(fx('S_Shake'),source,effect)[0])
+
+    def test_verified_plain_sapphire_amount_is_not_left_at_default(self):
+        effect=dict(id='ofx.com.genarts.sapphire.distort.s_distort',name='S_Distort [OFX]',
+                    params=[dict(id='Amount',name='Amount',type='slider')],
+                    parameterSemantics={'Amount':{'doubleType':'OfxParamDoubleTypePlain'}})
+        mapped,_,scale=catalog(effect).parameter(fx('S_Distort'),prop('Amount'),effect)
+        self.assertEqual(mapped['id'],'Amount');self.assertEqual(scale,1)
+
+    def test_fill_stored_opacity_and_ease_are_percent_scaled(self):
+        effect=dict(id='ec.generate.fill',name='Fill',params=[dict(id='opacity',name='Opacity',type='slider')])
+        mapped,_,scale=catalog(effect).parameter(fx('ADBE Fill'),prop('Opacity','ADBE Fill-0005',min_value=0,max_value=1),effect)
+        self.assertEqual(mapped['id'],'opacity');self.assertEqual(scale,100)
+        key=N(value=.75,in_temporal_ease=[N(speed=.5,influence=60)],out_temporal_ease=[])
+        self.assertEqual(c.ScaledProperty(N(value=.25,keyframes=[key]),scale).keyframes[0].in_temporal_ease[0].speed,50)
+
+    def test_keylight_kept_crop_boundary_does_not_remove_entire_frame(self):
+        effect=dict(id='ec.keying.keylight',name='Key Light',params=[dict(id='sourceCrops/cropRight',name='Right',type='slider')])
+        key=N(value=75,in_temporal_ease=[N(speed=-10,influence=60)],out_temporal_ease=[])
+        source=prop('Right','Keylight 906-0076',min_value=0,max_value=100,value=100,keyframes=[key])
+        mapped,_,scale=catalog(effect).parameter(fx('Keylight 906'),source,effect)
+        proxy=c.ScaledProperty(source,scale,mapped['valueOffset'])
+        self.assertEqual(proxy.value,0)
+        self.assertEqual(proxy.keyframes[0].value,25)
+        self.assertEqual(proxy.keyframes[0].in_temporal_ease[0].speed,10)
+
+    def test_reordered_popup_validates_every_key_before_mapping(self):
+        effect=dict(id='ec.simulation.shatter',name='Shatter',params=[dict(id='shape/pattern',name='Pattern',type='popup',options=['Bricks','Glass'])])
+        source=prop('Pattern','APC Shatter-0006',value=1,keyframes=[N(value=3)],property_parameters=['Glass','Unsupported','Bricks'])
+        mapped,_,_=catalog(effect).parameter(fx('APC Shatter'),source,effect)
+        proxy=c.EnumProperty(source,mapped['enumSource'],mapped['enumTarget'])
+        self.assertEqual(proxy.value,2);self.assertEqual(proxy.keyframes[0].value,1)
+        source.keyframes.append(N(value=2))
+        self.assertIsNone(catalog(effect).parameter(fx('APC Shatter'),source,effect)[0])
+
+    def test_static_center_xy_maps_both_components_and_y_origin(self):
+        from py_aep import PropertyValueType
+        semantics={'doubleType':'OfxParamDoubleTypeNormalisedXYAbsolute'}
+        effect=dict(id='ofx.com.genarts.sapphire.blur.s_blurmocurves',name='S_BlurMoCurves [OFX]',params=[
+            dict(id='Center_x',name='Center X',type='slider'),dict(id='Center_y',name='Center Y',type='slider')],
+            parameterSemantics={'Center_x':semantics,'Center_y':semantics})
+        source=prop('Center XY',value=[270,180],keyframes=[],is_spatial=True)
+        mapped,_,_=catalog(effect).parameter(fx('S_BlurMoCurves'),source,effect,(1080,720))
+        self.assertEqual(len(mapped['splitTargets']),2)
+        self.assertAlmostEqual(c.ComponentProperty(source,0,1/1080,0,PropertyValueType.OneD).value,.25)
+        self.assertAlmostEqual(c.ComponentProperty(source,1,-1/720,1,PropertyValueType.OneD).value,.75)
+        source.keyframes=[N(value=[270,180])]
+        self.assertIsNone(catalog(effect).parameter(fx('S_BlurMoCurves'),source,effect,(1080,720))[0])
+
     def test_source_curve_replaces_generated_time_remap_keys(self):
         import _base
         from py_aep import PropertyValueType

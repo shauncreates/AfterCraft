@@ -1,8 +1,8 @@
 asset: aftercraft-256.png
-title: AfterCraft layer-stack mark
+title: AfterCraft AC and offset layers mark
 author: AfterCraft contributors
 source: original work; tools/brand/generate.py
 license: MIT OR Apache-2.0
 license-file: ../../LICENSE-MIT
 added: 2026-10-25 by AfterCraft contributors
-notes: Original geometric layers and play marker; generated without tracing third-party artwork.
+notes: Replaced on 2026-10-27 with the user-selected original AC/layers design in purple. Original polygon geometry; no Adobe or ArtCraft artwork copied or traced.

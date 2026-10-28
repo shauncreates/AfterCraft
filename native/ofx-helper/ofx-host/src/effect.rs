@@ -322,9 +322,19 @@ impl OfxEffect {
         let out = Arc::new(ClipImage::blank(bounds, rod_px, depth, out_comps));
         *ctx.output.lock().unwrap_or_else(PoisonError::into_inner) = Some(out.clone());
 
-        inst.begin_sequence(t, geom.scale);
-        let status = inst.render(t, window, geom.scale);
-        inst.end_sequence(t, geom.scale);
+        let status = if crate::opengl::render(inst, t, window, geom.scale, &out)? {
+            K_STAT_OK
+        } else {
+            // A failed optional GPU render must never contaminate the CPU retry.
+            // SAFETY: no plug-in action is running and this instance owns the output buffer.
+            unsafe {
+                out.buf.bytes_mut().fill(0);
+            }
+            inst.begin_sequence(t, geom.scale);
+            let status = inst.render(t, window, geom.scale);
+            inst.end_sequence(t, geom.scale);
+            status
+        };
         inst.rendered = true;
         match status {
             K_STAT_OK | K_STAT_REPLY_DEFAULT => {}

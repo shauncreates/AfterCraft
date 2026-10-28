@@ -556,7 +556,7 @@ impl Instance {
         obj.props.put_double(IE_PROJECT_PAR, 1.0);
         obj.props.put_double(IE_EFFECT_DURATION, UNKNOWN_DURATION);
         obj.props.put_int(IE_SEQUENTIAL_RENDER, 0);
-        obj.props.put_str(IE_OPENGL_ENABLED, "false");
+        obj.props.put_int(IE_OPENGL_ENABLED, 0);
         let comps: HashMap<String, Comps> = cfg.clips.iter().map(|c| (c.name.clone(), c.comps)).collect();
         obj.each_clip(|c| {
             let comp = comps.get(&c.name).copied().unwrap_or(Comps::Rgba);
@@ -745,6 +745,7 @@ impl Instance {
 
     fn sequence_args(&self, time: f64, scale: f64) -> PropSet {
         let inp = PropSet::new();
+        crate::opengl::action_args(&inp);
         inp.put_doubles(IE_FRAME_RANGE, &[time, time]);
         inp.put_double(IE_FRAME_STEP, 1.0);
         inp.put_int(P_IS_INTERACTIVE, 0);
@@ -765,6 +766,7 @@ impl Instance {
     /// `kOfxImageEffectActionRender`.
     pub fn render(&self, time: f64, window: OfxRectI, scale: f64) -> OfxStatus {
         let inp = PropSet::new();
+        crate::opengl::action_args(&inp);
         inp.put_double(P_TIME, time);
         inp.put_str(IE_FIELD_TO_RENDER, FIELD_NONE);
         inp.put_ints(IE_RENDER_WINDOW, &[window.x1, window.y1, window.x2, window.y2]);
