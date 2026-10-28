@@ -1,5 +1,11 @@
 # Current portable extension
 
+**Superseded for After Effects:** use the [Current CEP installer](https://github.com/shauncreates/Current/releases/tag/v1.0.0-preview.3).
+Close the old Current.jsx panel in AE. This legacy ScriptUI preview raised a blocking
+graph.notify error there. EffectCraft/AfterCraft currently do not host CEP panels;
+AfterCraft has its own native Current panel. See the standalone repository for current
+host support and installation instructions.
+
 An independent ScriptUI curve editor for normal EffectCraft and Adobe After Effects. This package
 contains Bezier, Spring, Elastic and Bounce modes, a draggable graph, original visual presets,
 named user curves, compact layout, optional Live apply and an independent motion preview.

@@ -1,5 +1,17 @@
 # Portable Current extension
 
+**After Effects update:** the ScriptUI preview described below is superseded by the
+[standalone Current CEP edition](https://github.com/shauncreates/Current/releases/tag/v1.0.0-preview.3).
+It installs under Adobe's CEP extensions directory and opens from Window > Extensions > Current.
+The old Current.jsx panel should be closed/disabled in After Effects; its graph.notify call
+produced a blocking runtime error there. The CEP edition was tested live in AE 26.5 with 20
+handle drags and successful Bezier/Spring application.
+
+**Host compatibility:** normal EffectCraft and current AfterCraft do not host CEP extensions.
+An isolated AfterCraft installation attempt rejected the Current CEP ZIP with an explicit
+unavailable-runtime error. AfterCraft's built-in native Current panel remains available.
+The ScriptUI route below is legacy EffectCraft compatibility, not CEP support.
+
 Current is also distributed as an independent ScriptUI extension for normal EffectCraft and
 After Effects. Its single original `Current.jsx` file supports a docked host Panel or floating
 Window, with Bezier, Spring, Elastic and Bounce editing. AfterCraft retains its native panel too.
