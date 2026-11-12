@@ -24,7 +24,7 @@ serde = { workspace = true, optional = true }
 [target.'cfg(windows)'.dependencies]
 image = { workspace = true, optional = true }
 tempfile = { version = "3", optional = true }
-zip = { version = "6", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [dev-dependencies]
 effectcraft-keyframe = { workspace = true }
